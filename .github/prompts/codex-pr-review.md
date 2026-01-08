@@ -75,6 +75,30 @@ gh pr diff "$pr_number" -R "$repo"
 
 ## Post Response to Github
 
+### Inline Comments
+
+For each validated issue, create an inline comment:
+
 ```bash
-gh issue comment <number> --body "Your verified response here"
+gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
+  -f body="**[SEVERITY]** [ISSUE-TYPE] Brief description
+
+**Why this is a problem**: Detailed explanation.
+
+**Suggested fix**:
+\`\`\`{language}
+// Corrected code here
+\`\`\`" \
+  -f commit_id="{LATEST_COMMIT_SHA}" \
+  -f path="{FILE_PATH}" \
+  -f line={LINE_NUMBER} \
+  -f side="RIGHT"
+```
+
+### Summary Report (MANDATORY)
+
+Submit a comprehensive review summary:
+
+```bash
+gh pr review --comment --body "{SUMMARY}"
 ```
