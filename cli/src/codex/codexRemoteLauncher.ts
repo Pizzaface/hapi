@@ -752,9 +752,12 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             // Handle isolated messages (/new, /model) – reset session state
             if (message.isolate) {
                 const isNewCommand = message.message.trim() === '/new';
+                const isClearCommand = message.message.trim() === '/clear';
                 const isModelCommand = message.message.trim() === '/model';
                 const statusLabel = isNewCommand
-                    ? 'Starting new Codex session...'
+                    ? 'Starting a new conversation...'
+                    : isClearCommand
+                        ? 'Resetting context...'
                     : isModelCommand
                         ? 'Restarting Codex session (model changed)...'
                         : 'Restarting Codex session...';
@@ -806,6 +809,8 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 diffProcessor.reset();
                 session.onThinkingChange(false);
                 if (isNewCommand) {
+                    session.sendSessionEvent({ type: 'message', message: 'Started a new conversation' });
+                } else if (isClearCommand) {
                     session.sendSessionEvent({ type: 'message', message: 'Context was reset' });
                 }
                 sendReady();

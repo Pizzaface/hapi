@@ -85,6 +85,12 @@ export async function runCodex(opts: {
         // Check for special commands before processing
         const specialCommand = parseSpecialCommand(message.content.text);
 
+        if (specialCommand.type === 'clear') {
+            logger.debug('[Codex] Detected /clear command');
+            messageQueue.pushIsolateAndClear('/clear', enhancedMode);
+            return;
+        }
+
         if (specialCommand.type === 'new') {
             logger.debug('[Codex] Detected /new command');
             messageQueue.pushIsolateAndClear('/new', enhancedMode);

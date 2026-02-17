@@ -35,6 +35,7 @@ const BUILTIN_COMMANDS: Record<string, SlashCommand[]> = {
         { name: 'plan', description: 'Toggle plan mode', source: 'builtin' },
     ],
     codex: [
+        { name: 'clear', description: 'Clear conversation history', source: 'builtin' },
         { name: 'new', description: 'Start a new conversation', source: 'builtin' },
         { name: 'review', description: 'Review current changes and find issues', source: 'builtin' },
         { name: 'compat', description: 'Summarize conversation to prevent hitting the context limit', source: 'builtin' },

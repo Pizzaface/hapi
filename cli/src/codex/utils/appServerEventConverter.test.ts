@@ -44,6 +44,19 @@ describe('AppServerEventConverter', () => {
         expect(completed).toEqual([{ type: 'agent_message', message: 'Hello world' }]);
     });
 
+    it('handles cumulative agent-message deltas without duplication', () => {
+        const converter = new AppServerEventConverter();
+
+        converter.handleNotification('item/agentMessage/delta', { itemId: 'msg-1', delta: 'Hey' });
+        converter.handleNotification('item/agentMessage/delta', { itemId: 'msg-1', delta: 'Hey!' });
+        converter.handleNotification('item/agentMessage/delta', { itemId: 'msg-1', delta: 'Hey! 👋' });
+        const completed = converter.handleNotification('item/completed', {
+            item: { id: 'msg-1', type: 'agentMessage' }
+        });
+
+        expect(completed).toEqual([{ type: 'agent_message', message: 'Hey! 👋' }]);
+    });
+
     it('maps command execution items and output deltas', () => {
         const converter = new AppServerEventConverter();
 
@@ -70,6 +83,30 @@ describe('AppServerEventConverter', () => {
         }]);
     });
 
+    it('handles cumulative command output deltas without duplication', () => {
+        const converter = new AppServerEventConverter();
+
+        converter.handleNotification('item/started', {
+            item: { id: 'cmd-1', type: 'commandExecution', command: 'echo hi' }
+        });
+
+        converter.handleNotification('item/commandExecution/outputDelta', { itemId: 'cmd-1', delta: 'A' });
+        converter.handleNotification('item/commandExecution/outputDelta', { itemId: 'cmd-1', delta: 'AB' });
+        converter.handleNotification('item/commandExecution/outputDelta', { itemId: 'cmd-1', delta: 'ABC' });
+
+        const completed = converter.handleNotification('item/completed', {
+            item: { id: 'cmd-1', type: 'commandExecution', exitCode: 0 }
+        });
+
+        expect(completed).toEqual([{
+            type: 'exec_command_end',
+            call_id: 'cmd-1',
+            command: 'echo hi',
+            output: 'ABC',
+            exit_code: 0
+        }]);
+    });
+
     it('maps reasoning deltas', () => {
         const converter = new AppServerEventConverter();
 
@@ -91,6 +128,24 @@ describe('AppServerEventConverter', () => {
         });
 
         expect(completed).toEqual([{ type: 'agent_message', message: 'Hello world' }]);
+    });
+
+    it('dedupes duplicate wrapped + direct completion for same agent message item', () => {
+        const converter = new AppServerEventConverter();
+
+        converter.handleNotification('codex/event/agent_message_content_delta', {
+            msg: { type: 'agent_message_content_delta', item_id: 'msg-1', delta: 'Hello world' }
+        });
+
+        const wrapped = converter.handleNotification('codex/event/item_completed', {
+            msg: { type: 'item_completed', item: { id: 'msg-1', type: 'AgentMessage' } }
+        });
+        const direct = converter.handleNotification('item/completed', {
+            item: { id: 'msg-1', type: 'AgentMessage' }
+        });
+
+        expect(wrapped).toEqual([{ type: 'agent_message', message: 'Hello world' }]);
+        expect(direct).toEqual([]);
     });
 
     it('maps diff updates', () => {

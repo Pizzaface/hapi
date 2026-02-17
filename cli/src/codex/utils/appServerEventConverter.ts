@@ -87,12 +87,39 @@ function extractChanges(value: unknown): Record<string, unknown> | null {
     return null;
 }
 
+function mergeDeltaText(previous: string, incoming: string): string {
+    if (!previous) return incoming;
+    if (!incoming) return previous;
+
+    // Some transports emit cumulative snapshots instead of append-only deltas.
+    // If incoming already includes previous, treat it as full replacement.
+    if (incoming.startsWith(previous)) {
+        return incoming;
+    }
+
+    // Duplicate replay of the same chunk; keep existing buffer.
+    if (previous.endsWith(incoming)) {
+        return previous;
+    }
+
+    // Overlap-safe append: append only non-overlapping suffix.
+    const maxOverlap = Math.min(previous.length, incoming.length);
+    for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
+        if (previous.slice(previous.length - overlap) === incoming.slice(0, overlap)) {
+            return previous + incoming.slice(overlap);
+        }
+    }
+
+    return previous + incoming;
+}
+
 export class AppServerEventConverter {
     private readonly agentMessageBuffers = new Map<string, string>();
     private readonly reasoningBuffers = new Map<string, string>();
     private readonly commandOutputBuffers = new Map<string, string>();
     private readonly commandMeta = new Map<string, Record<string, unknown>>();
     private readonly fileChangeMeta = new Map<string, Record<string, unknown>>();
+    private readonly completedItemKeys = new Set<string>();
 
     handleNotification(method: string, params: unknown): ConvertedEvent[] {
         const events: ConvertedEvent[] = [];
@@ -329,7 +356,7 @@ export class AppServerEventConverter {
             const delta = asString(paramsRecord.delta ?? paramsRecord.text ?? paramsRecord.message);
             if (itemId && delta) {
                 const prev = this.agentMessageBuffers.get(itemId) ?? '';
-                this.agentMessageBuffers.set(itemId, prev + delta);
+                this.agentMessageBuffers.set(itemId, mergeDeltaText(prev, delta));
             }
             return events;
         }
@@ -339,7 +366,7 @@ export class AppServerEventConverter {
             const delta = asString(paramsRecord.delta ?? paramsRecord.text ?? paramsRecord.message);
             if (delta) {
                 const prev = this.reasoningBuffers.get(itemId) ?? '';
-                this.reasoningBuffers.set(itemId, prev + delta);
+                this.reasoningBuffers.set(itemId, mergeDeltaText(prev, delta));
                 events.push({ type: 'agent_reasoning_delta', delta });
             }
             return events;
@@ -355,7 +382,7 @@ export class AppServerEventConverter {
             const delta = asString(paramsRecord.delta ?? paramsRecord.text ?? paramsRecord.output ?? paramsRecord.stdout);
             if (itemId && delta) {
                 const prev = this.commandOutputBuffers.get(itemId) ?? '';
-                this.commandOutputBuffers.set(itemId, prev + delta);
+                this.commandOutputBuffers.set(itemId, mergeDeltaText(prev, delta));
             }
             return events;
         }
@@ -368,7 +395,7 @@ export class AppServerEventConverter {
                 const previousOutput = asString(meta.stdout) ?? '';
                 this.fileChangeMeta.set(itemId, {
                     ...meta,
-                    stdout: `${previousOutput}${delta}`
+                    stdout: mergeDeltaText(previousOutput, delta)
                 });
             }
             return events;
@@ -393,7 +420,17 @@ export class AppServerEventConverter {
                 return events;
             }
 
+            const completionKey = `${itemType}:${itemId}`;
+            if (method === 'item/started') {
+                this.completedItemKeys.delete(completionKey);
+            } else if (this.completedItemKeys.has(completionKey)) {
+                return events;
+            }
+
             if (itemType === 'usermessage' || itemType === 'mcptoolcall' || itemType === 'websearch') {
+                if (method === 'item/completed') {
+                    this.completedItemKeys.add(completionKey);
+                }
                 return events;
             }
 
@@ -404,6 +441,7 @@ export class AppServerEventConverter {
                         events.push({ type: 'agent_message', message: text });
                     }
                     this.agentMessageBuffers.delete(itemId);
+                    this.completedItemKeys.add(completionKey);
                 }
                 return events;
             }
@@ -415,6 +453,7 @@ export class AppServerEventConverter {
                         events.push({ type: 'agent_reasoning', text });
                     }
                     this.reasoningBuffers.delete(itemId);
+                    this.completedItemKeys.add(completionKey);
                 }
                 return events;
             }
@@ -458,6 +497,7 @@ export class AppServerEventConverter {
 
                     this.commandMeta.delete(itemId);
                     this.commandOutputBuffers.delete(itemId);
+                    this.completedItemKeys.add(completionKey);
                 }
 
                 return events;
@@ -495,6 +535,7 @@ export class AppServerEventConverter {
                     });
 
                     this.fileChangeMeta.delete(itemId);
+                    this.completedItemKeys.add(completionKey);
                 }
 
                 return events;
@@ -511,5 +552,6 @@ export class AppServerEventConverter {
         this.commandOutputBuffers.clear();
         this.commandMeta.clear();
         this.fileChangeMeta.clear();
+        this.completedItemKeys.clear();
     }
 }

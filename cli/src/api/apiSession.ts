@@ -42,6 +42,7 @@ export class ApiSessionClient extends EventEmitter {
     private agentStateVersion: number
     private readonly socket: Socket<ServerToClientEvents, ClientToServerEvents>
     private pendingMessages: UserMessage[] = []
+    private pendingUserEchoes: Array<{ text: string; createdAt: number }> = []
     private pendingMessageCallback: ((message: UserMessage) => void) | null = null
     private lastSeenMessageSeq: number | null = null
     private backfillInFlight: Promise<void> | null = null
@@ -254,6 +255,40 @@ export class ApiSessionClient extends EventEmitter {
         }
     }
 
+    private normalizeUserEchoText(text: string): string {
+        return text.replace(/\s+/g, ' ').trim()
+    }
+
+    private trackPendingUserEcho(text: string): void {
+        const normalized = this.normalizeUserEchoText(text)
+        if (!normalized) {
+            return
+        }
+
+        const now = Date.now()
+        const windowMs = 120_000
+        this.pendingUserEchoes = this.pendingUserEchoes.filter((entry) => now - entry.createdAt <= windowMs)
+        this.pendingUserEchoes.push({ text: normalized, createdAt: now })
+    }
+
+    private consumePendingUserEcho(text: string): boolean {
+        const normalized = this.normalizeUserEchoText(text)
+        if (!normalized) {
+            return false
+        }
+
+        const now = Date.now()
+        const windowMs = 120_000
+        this.pendingUserEchoes = this.pendingUserEchoes.filter((entry) => now - entry.createdAt <= windowMs)
+        const index = this.pendingUserEchoes.findIndex((entry) => entry.text === normalized)
+        if (index === -1) {
+            return false
+        }
+
+        this.pendingUserEchoes.splice(index, 1)
+        return true
+    }
+
     private handleIncomingMessage(message: { seq?: number; content: unknown }): void {
         const seq = typeof message.seq === 'number' ? message.seq : null
         if (seq !== null) {
@@ -265,6 +300,11 @@ export class ApiSessionClient extends EventEmitter {
 
         const userResult = UserMessageSchema.safeParse(message.content)
         if (userResult.success) {
+            if (userResult.data.meta?.sentFrom === 'scanner') {
+                logger.debug('[API] Ignoring scanner-originated user message for agent input queue')
+                return
+            }
+            this.trackPendingUserEcho(userResult.data.content.text)
             this.enqueueUserMessage(userResult.data)
             return
         }
@@ -403,6 +443,13 @@ export class ApiSessionClient extends EventEmitter {
 
     sendUserMessage(text: string, meta?: MessageMeta): void {
         if (!text) {
+            return
+        }
+
+        // Local transcript scanners can echo messages that were already sent through hub.
+        // Suppress one matching echo to avoid duplicate persisted messages and SSE events.
+        if (this.consumePendingUserEcho(text)) {
+            logger.debug('[API] Suppressed echoed user message from local transcript scanner')
             return
         }
 

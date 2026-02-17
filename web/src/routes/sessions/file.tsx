@@ -124,6 +124,29 @@ function isBinaryContent(content: string): boolean {
     return nonPrintable / content.length > 0.1
 }
 
+function inferImageMimeType(path: string): string | null {
+    const parts = path.split('.')
+    if (parts.length <= 1) return null
+
+    const extension = parts[parts.length - 1]?.toLowerCase()
+    if (!extension) return null
+
+    const imageMimeTypes: Record<string, string> = {
+        apng: 'image/apng',
+        avif: 'image/avif',
+        bmp: 'image/bmp',
+        gif: 'image/gif',
+        ico: 'image/x-icon',
+        jpeg: 'image/jpeg',
+        jpg: 'image/jpeg',
+        png: 'image/png',
+        svg: 'image/svg+xml',
+        webp: 'image/webp'
+    }
+
+    return imageMimeTypes[extension] ?? null
+}
+
 function extractCommandError(result: GitCommandResponse | undefined): string | null {
     if (!result) return null
     if (result.success) return null
@@ -171,12 +194,17 @@ export default function FilePage() {
     const diffFailed = diffQuery.data?.success === false
 
     const fileContentResult = fileQuery.data
+    const imageMimeType = useMemo(() => inferImageMimeType(filePath), [filePath])
+    const isImageFile = Boolean(imageMimeType)
     const decodedContentResult = fileContentResult?.success && fileContentResult.content
         ? decodeBase64(fileContentResult.content)
         : { text: '', ok: true }
     const decodedContent = decodedContentResult.text
+    const imageDataUrl = fileContentResult?.success && fileContentResult.content && imageMimeType
+        ? `data:${imageMimeType};base64,${fileContentResult.content}`
+        : null
     const binaryFile = fileContentResult?.success
-        ? !decodedContentResult.ok || isBinaryContent(decodedContent)
+        ? (!isImageFile && (!decodedContentResult.ok || isBinaryContent(decodedContent)))
         : false
 
     const language = useMemo(() => resolveLanguage(filePath), [filePath])
@@ -262,7 +290,7 @@ export default function FilePage() {
                             onClick={() => setDisplayMode('file')}
                             className={`rounded px-3 py-1 text-xs font-semibold ${displayMode === 'file' ? 'bg-[var(--app-button)] text-[var(--app-button-text)] opacity-80' : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)]'}`}
                         >
-                            File
+                            {isImageFile ? 'Image' : 'File'}
                         </button>
                     </div>
                 </div>
@@ -290,7 +318,15 @@ export default function FilePage() {
                     ) : displayMode === 'diff' && diffError ? (
                         <div className="text-sm text-[var(--app-hint)]">{diffError}</div>
                     ) : displayMode === 'file' ? (
-                        decodedContent ? (
+                        isImageFile && imageDataUrl ? (
+                            <div className="rounded-md border border-[var(--app-border)] bg-[var(--app-code-bg)] p-3">
+                                <img
+                                    src={imageDataUrl}
+                                    alt={fileName}
+                                    className="mx-auto max-h-[75vh] w-auto max-w-full rounded"
+                                />
+                            </div>
+                        ) : decodedContent ? (
                             <pre className="shiki overflow-auto rounded-md bg-[var(--app-code-bg)] p-3 text-xs font-mono">
                                 <code>{highlighted ?? decodedContent}</code>
                             </pre>
