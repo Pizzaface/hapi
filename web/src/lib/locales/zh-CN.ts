@@ -121,15 +121,6 @@ export default {
   'newSession.create': '创建',
   'newSession.creating': '创建中…',
 
-  // Spawn session (old component)
-  'spawn.title': '创建会话',
-  'spawn.sessionType': '会话类型',
-  'spawn.useAsIs': '直接使用选定的目录',
-  'spawn.createWorktree': '在仓库旁创建新工作树',
-  'spawn.worktreePlaceholder': 'feature-x (默认 1228-xxxx)',
-  'spawn.cancel': '取消',
-  'spawn.create': '创建会话',
-  'spawn.creating': '创建中…',
 
   // Machine
   'machine.unknown': '未知平台',

@@ -119,15 +119,6 @@ export default {
   'newSession.create': 'Create',
   'newSession.creating': 'Creating…',
 
-  // Spawn session (old component)
-  'spawn.title': 'Create Session',
-  'spawn.sessionType': 'Session type',
-  'spawn.useAsIs': 'Use selected directory as-is',
-  'spawn.createWorktree': 'Create a new worktree next to repo',
-  'spawn.worktreePlaceholder': 'feature-x (default 1228-xxxx)',
-  'spawn.cancel': 'Cancel',
-  'spawn.create': 'Create Session',
-  'spawn.creating': 'Creating…',
 
   // Machine
   'machine.unknown': 'Unknown platform',
