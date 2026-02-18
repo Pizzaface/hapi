@@ -211,4 +211,16 @@ export type UpdatePreferencesResponse = {
     preferences: PreferencesResponse
 }
 
+export type SystemStats = {
+    cpuPercent: number
+    memUsedBytes: number
+    memTotalBytes: number
+}
+
+export type HealthResponse = {
+    status: string
+    protocolVersion?: number
+    system: SystemStats
+}
+
 export type SyncEvent = ProtocolSyncEvent

@@ -37,6 +37,8 @@ import FilePage from '@/routes/sessions/file'
 import TerminalPage from '@/routes/sessions/terminal'
 import SettingsPage from '@/routes/settings'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
+import { useSystemStats } from '@/hooks/queries/useSystemStats'
+import { SystemStatsBar } from '@/components/SystemStatsBar'
 import type { DecryptedMessage, SlashCommand } from '@/types/api'
 
 function parseModelOptionsFromSlashCommands(commands: SlashCommand[]): string[] {
@@ -163,6 +165,7 @@ function SessionsPage() {
     const matchRoute = useMatchRoute()
     const { t } = useTranslation()
     const { sessions, isLoading, error, refetch } = useSessions(api)
+    const { stats: systemStats } = useSystemStats(api)
 
     const handleRefresh = useCallback(() => {
         void refetch()
@@ -230,6 +233,8 @@ function SessionsPage() {
                         api={api}
                     />
                 </div>
+
+                <SystemStatsBar stats={systemStats} />
             </div>
 
             <div className={`${isSessionsIndex ? 'hidden lg:flex' : 'flex'} min-w-0 flex-1 flex-col bg-[var(--app-bg)]`}>

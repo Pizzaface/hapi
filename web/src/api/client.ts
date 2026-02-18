@@ -2,6 +2,7 @@ import type {
     AttachmentMetadata,
     AuthResponse,
     DeleteUploadResponse,
+    HealthResponse,
     ListDirectoryResponse,
     FileReadResponse,
     FileSearchResponse,
@@ -135,6 +136,14 @@ export class ApiClient {
         }
 
         return await res.json() as T
+    }
+
+    async getHealth(): Promise<HealthResponse> {
+        const res = await fetch(this.buildUrl('/health'))
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status} ${res.statusText}`)
+        }
+        return await res.json() as HealthResponse
     }
 
     async authenticate(auth: { initData: string } | { accessToken: string }): Promise<AuthResponse> {

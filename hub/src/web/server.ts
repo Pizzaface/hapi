@@ -29,6 +29,9 @@ import { loadEmbeddedAssetMap, type EmbeddedWebAsset } from './embeddedAssets'
 import { isBunCompiled } from '../utils/bunCompiled'
 import type { Store } from '../store'
 import { handleVoiceUpgrade, createVoiceWsHandlers, type VoiceWebSocketData } from './voiceWebSocket'
+import { totalmem } from 'node:os'
+import { getCpuPercent, startCpuSampler } from './cpuSampler'
+import { getMemUsedBytes } from './systemMem'
 
 type MuxWebSocketData = WebSocketData | VoiceWebSocketData
 
@@ -75,7 +78,15 @@ function createWebApp(options: {
     app.use('*', logger())
 
     // Health check endpoint (no auth required)
-    app.get('/health', (c) => c.json({ status: 'ok', protocolVersion: PROTOCOL_VERSION }))
+    app.get('/health', (c) => c.json({
+        status: 'ok',
+        protocolVersion: PROTOCOL_VERSION,
+        system: {
+            cpuPercent: getCpuPercent(),
+            memUsedBytes: getMemUsedBytes(),
+            memTotalBytes: totalmem(),
+        },
+    }))
 
     const corsOrigins = options.corsOrigins ?? configuration.corsOrigins
     const corsOriginOption = corsOrigins.includes('*') ? '*' : corsOrigins
@@ -218,6 +229,8 @@ export async function startWebServer(options: {
     relayMode?: boolean
     officialWebUrl?: string
 }): Promise<BunServer<MuxWebSocketData>> {
+    startCpuSampler()
+
     const isCompiled = isBunCompiled()
     const embeddedAssetMap = isCompiled ? await loadEmbeddedAssetMap() : null
     const app = createWebApp({
