@@ -20,6 +20,7 @@ import { LoadingState } from '@/components/LoadingState'
 import { useAppContext } from '@/lib/app-context'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { isTelegramApp } from '@/hooks/useTelegram'
+import { useSessionListView } from '@/hooks/useSessionListView'
 import { useMessages } from '@/hooks/queries/useMessages'
 import { useMachines } from '@/hooks/queries/useMachines'
 import { useSession } from '@/hooks/queries/useSession'
@@ -166,6 +167,7 @@ function SessionsPage() {
     const { t } = useTranslation()
     const { sessions, isLoading, error, refetch } = useSessions(api)
     const { stats: systemStats } = useSystemStats(api)
+    const { view, toggleView } = useSessionListView()
     const scrollContainerRef = useRef<HTMLDivElement>(null)
 
     const handleRefresh = useCallback(() => {
@@ -185,7 +187,9 @@ function SessionsPage() {
                 <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
                     <div className="mx-auto w-full max-w-content flex items-center justify-between px-3 py-2">
                         <div className="text-xs text-[var(--app-hint)]">
-                            {t('sessions.count', { n: sessions.length, m: projectCount })}
+                            {view === 'flat'
+                                ? t('sessions.countFlat', { n: sessions.length })
+                                : t('sessions.count', { n: sessions.length, m: projectCount })}
                         </div>
                         <div className="flex items-center gap-2">
                             <button
@@ -233,6 +237,8 @@ function SessionsPage() {
                         isLoading={isLoading}
                         renderHeader={false}
                         api={api}
+                        view={view}
+                        onToggleView={toggleView}
                     />
                 </div>
 

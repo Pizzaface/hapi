@@ -100,6 +100,28 @@ export function pruneSessionReadHistory(
     return changed ? next : history
 }
 
+export function sortSessionsByPriority(
+    sessions: SessionSummary[],
+    readHistory: SessionReadHistory,
+    unreadSessionIds: Set<string>,
+    now: number = Date.now()
+): SessionSummary[] {
+    return [...sessions].sort((a, b) => {
+        const readA = readHistory[a.id]
+        const readB = readHistory[b.id]
+
+        const rankA = getSessionRank(a, readA, now, unreadSessionIds.has(a.id))
+        const rankB = getSessionRank(b, readB, now, unreadSessionIds.has(b.id))
+        if (rankA !== rankB) return rankA - rankB
+
+        if ((readA ?? 0) !== (readB ?? 0)) {
+            return (readB ?? 0) - (readA ?? 0)
+        }
+
+        return b.updatedAt - a.updatedAt
+    })
+}
+
 export function groupSessionsByDirectory(
     sessions: SessionSummary[],
     readHistory: SessionReadHistory,
@@ -118,20 +140,7 @@ export function groupSessionsByDirectory(
 
     return Array.from(groups.entries())
         .map(([directory, groupSessions]) => {
-            const sortedSessions = [...groupSessions].sort((a, b) => {
-                const readA = readHistory[a.id]
-                const readB = readHistory[b.id]
-
-                const rankA = getSessionRank(a, readA, now, unreadSessionIds.has(a.id))
-                const rankB = getSessionRank(b, readB, now, unreadSessionIds.has(b.id))
-                if (rankA !== rankB) return rankA - rankB
-
-                if ((readA ?? 0) !== (readB ?? 0)) {
-                    return (readB ?? 0) - (readA ?? 0)
-                }
-
-                return b.updatedAt - a.updatedAt
-            })
+            const sortedSessions = sortSessionsByPriority(groupSessions, readHistory, unreadSessionIds, now)
 
             const latestUpdatedAt = groupSessions.reduce(
                 (max, s) => (s.updatedAt > max ? s.updatedAt : max),
@@ -164,6 +173,26 @@ export function groupSessionsByDirectory(
 
             return b.latestUpdatedAt - a.latestUpdatedAt
         })
+}
+
+export const FLAT_DIRECTORY_KEY = '__hapi_flat__'
+
+export function flattenSessions(
+    sessions: SessionSummary[],
+    readHistory: SessionReadHistory,
+    unreadSessionIds: Set<string> = new Set(),
+    now: number = Date.now()
+): SessionGroup[] {
+    if (sessions.length === 0) return []
+
+    return [{
+        directory: FLAT_DIRECTORY_KEY,
+        displayName: '',
+        sessions: sortSessionsByPriority(sessions, readHistory, unreadSessionIds, now),
+        latestUpdatedAt: sessions.reduce((max, s) => Math.max(max, s.updatedAt), -Infinity),
+        latestReadAt: sessions.reduce((max, s) => Math.max(max, readHistory[s.id] ?? -Infinity), -Infinity),
+        hasActiveSession: sessions.some(s => s.active)
+    }]
 }
 
 export function patchGroupsVisuals(
@@ -203,49 +232,75 @@ export function getSessionIdHash(sessions: SessionSummary[]): string {
 
 export type FreezeState = {
     frozenGroups: SessionGroup[] | null
-    prevSelectedSessionId: string | null | undefined
+    prevSelectedSessionId: string | null
     prevSessionIdHash: string
+    prevViewKey: string
     unfreezeCount: number
+    selectionFreezeArmed: boolean
 }
 
 export function computeFreezeStep(
     state: FreezeState,
     liveGroups: SessionGroup[],
     selectedSessionId: string | null | undefined,
-    sessions: SessionSummary[]
+    sessions: SessionSummary[],
+    viewKey: 'grouped' | 'flat'
 ): FreezeState & { displayGroups: SessionGroup[] } {
-    const selectionChanged = selectedSessionId !== state.prevSelectedSessionId
+    const normalizedSelectedSessionId = selectedSessionId ?? null
+    const prevSelectedSessionId = state.prevSelectedSessionId ?? null
+    const selectionChanged = normalizedSelectedSessionId !== prevSelectedSessionId
     const sessionIdHash = getSessionIdHash(sessions)
     const sessionsChanged = sessionIdHash !== state.prevSessionIdHash
-
-    // Determine if we should unfreeze (re-sort).
-    // Unfreeze when: session set changes (new/deleted), or deselecting (going to null).
-    // Stay frozen when: selecting from null, or switching between sessions.
-    const isDeselecting = selectionChanged && !selectedSessionId && !!state.prevSelectedSessionId
-    const shouldUnfreeze = sessionsChanged || isDeselecting
+    const viewChanged = viewKey !== state.prevViewKey
 
     let frozenGroups = state.frozenGroups
     let unfreezeCount = state.unfreezeCount
+    let selectionFreezeArmed = state.selectionFreezeArmed
 
-    if (shouldUnfreeze || !frozenGroups) {
+    // Freeze strategy:
+    // - On selection changes (null->session or session->session), freeze immediately so the
+    //   click render doesn't reorder.
+    // - Keep freeze armed for one settled render to absorb readHistory/unread effects.
+    // - Then unfreeze once, letting list reflect latest sort inputs again.
+    // - Always unfreeze on session ID set changes or deselect.
+    const isSelecting = selectionChanged && normalizedSelectedSessionId !== null
+    const isDeselecting = selectionChanged && normalizedSelectedSessionId === null
+    const shouldForceUnfreeze = sessionsChanged || isDeselecting || viewChanged
+    const shouldReleaseArmedFreeze = (
+        selectionFreezeArmed
+        && !selectionChanged
+        && normalizedSelectedSessionId !== null
+    )
+
+    if (!frozenGroups) {
         frozenGroups = liveGroups
-        if (shouldUnfreeze) {
-            unfreezeCount += 1
-        }
-    } else if (selectedSessionId) {
-        // Frozen: update visual properties (active, thinking, badges) without reordering.
-        // On initial selection (null → session), frozenGroups holds the pre-click order
-        // from the previous render, so patchGroupsVisuals preserves that order.
+    }
+
+    if (shouldForceUnfreeze) {
+        frozenGroups = liveGroups
+        unfreezeCount += 1
+        selectionFreezeArmed = false
+    } else if (isSelecting) {
+        selectionFreezeArmed = true
+        frozenGroups = patchGroupsVisuals(frozenGroups, sessions)
+    } else if (shouldReleaseArmedFreeze) {
+        frozenGroups = liveGroups
+        unfreezeCount += 1
+        selectionFreezeArmed = false
+    } else if (selectionFreezeArmed && normalizedSelectedSessionId !== null) {
         frozenGroups = patchGroupsVisuals(frozenGroups, sessions)
     } else {
         frozenGroups = liveGroups
+        selectionFreezeArmed = false
     }
 
     return {
         frozenGroups,
-        prevSelectedSessionId: selectedSessionId,
+        prevSelectedSessionId: normalizedSelectedSessionId,
         prevSessionIdHash: sessionIdHash,
+        prevViewKey: viewKey,
         unfreezeCount,
+        selectionFreezeArmed,
         displayGroups: frozenGroups
     }
 }
@@ -253,16 +308,19 @@ export function computeFreezeStep(
 function useFrozenGroups(
     liveGroups: SessionGroup[],
     selectedSessionId: string | null | undefined,
-    sessions: SessionSummary[]
+    sessions: SessionSummary[],
+    viewKey: 'grouped' | 'flat'
 ): { displayGroups: SessionGroup[]; unfreezeCount: number } {
     const stateRef = useRef<FreezeState>({
         frozenGroups: null,
         prevSelectedSessionId: null,
         prevSessionIdHash: getSessionIdHash(sessions),
-        unfreezeCount: 0
+        prevViewKey: viewKey,
+        unfreezeCount: 0,
+        selectionFreezeArmed: false
     })
 
-    const result = computeFreezeStep(stateRef.current, liveGroups, selectedSessionId, sessions)
+    const result = computeFreezeStep(stateRef.current, liveGroups, selectedSessionId, sessions, viewKey)
     stateRef.current = result
 
     return {
@@ -424,6 +482,7 @@ function SessionItem(props: {
     onSelect: (sessionId: string) => void
     onToggleSelected: (sessionId: string) => void
     showPath?: boolean
+    projectLabel?: string
     api: ApiClient | null
     selected?: boolean
     selectionMode: boolean
@@ -436,6 +495,7 @@ function SessionItem(props: {
         onSelect,
         onToggleSelected,
         showPath = true,
+        projectLabel,
         api,
         selected = false,
         selectionMode,
@@ -631,6 +691,11 @@ function SessionItem(props: {
                         </div>
                     ) : null}
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--app-hint)]">
+                        {projectLabel ? (
+                            <span className="truncate max-w-[160px]" title={projectLabel} data-session-project-label>
+                                {projectLabel}
+                            </span>
+                        ) : null}
                         <span className="inline-flex items-center gap-2">
                             <span className="flex h-4 w-4 items-center justify-center" aria-hidden="true">
                                 ❖
@@ -700,6 +765,8 @@ export function SessionList(props: {
     api: ApiClient | null
     selectedSessionId?: string | null
     scrollContainerRef?: RefObject<HTMLElement | null>
+    view?: 'grouped' | 'flat'
+    onToggleView?: () => void
 }) {
     const { t } = useTranslation()
     const queryClient = useQueryClient()
@@ -788,15 +855,19 @@ export function SessionList(props: {
         })
     }, [selectedSessionId])
 
+    const isFlat = props.view === 'flat'
     const liveGroups = useMemo(
-        () => groupSessionsByDirectory(props.sessions, readHistory, unreadSessionIds),
-        [props.sessions, readHistory, unreadSessionIds]
+        () => isFlat
+            ? flattenSessions(props.sessions, readHistory, unreadSessionIds)
+            : groupSessionsByDirectory(props.sessions, readHistory, unreadSessionIds),
+        [props.sessions, readHistory, unreadSessionIds, isFlat]
     )
 
     const { displayGroups, unfreezeCount } = useFrozenGroups(
         liveGroups,
         selectedSessionId,
-        props.sessions
+        props.sessions,
+        isFlat ? 'flat' : 'grouped'
     )
 
     const listContainerRef = useRef<HTMLDivElement>(null)
@@ -842,6 +913,7 @@ export function SessionList(props: {
     }
 
     useEffect(() => {
+        if (isFlat) return
         setCollapseOverrides(prev => {
             if (prev.size === 0) return prev
             const next = new Map(prev)
@@ -855,7 +927,7 @@ export function SessionList(props: {
             }
             return changed ? next : prev
         })
-    }, [displayGroups])
+    }, [displayGroups, isFlat])
 
     const toggleSelectedSession = useCallback((sessionId: string) => {
         setSelectedSessionIds(prev => {
@@ -939,7 +1011,9 @@ export function SessionList(props: {
             {renderHeader ? (
                 <div className="flex items-center justify-between px-3 py-1">
                     <div className="text-xs text-[var(--app-hint)]">
-                        {t('sessions.count', { n: props.sessions.length, m: displayGroups.length })}
+                        {isFlat
+                            ? t('sessions.countFlat', { n: props.sessions.length })
+                            : t('sessions.count', { n: props.sessions.length, m: displayGroups.length })}
                     </div>
                     <button
                         type="button"
@@ -977,7 +1051,20 @@ export function SessionList(props: {
                         </div>
                     </>
                 ) : (
-                    <div className="ml-auto">
+                    <div className="ml-auto flex items-center gap-2">
+                        {props.onToggleView ? (
+                            <button
+                                type="button"
+                                onClick={props.onToggleView}
+                                className={`rounded border px-2 py-1 text-xs ${isFlat
+                                    ? 'border-[var(--app-link)] text-[var(--app-link)]'
+                                    : 'border-[var(--app-border)] text-[var(--app-hint)]'}`}
+                                aria-pressed={isFlat}
+                                title={isFlat ? t('sessions.view.grouped') : t('sessions.view.flat')}
+                            >
+                                {isFlat ? t('sessions.view.flat') : t('sessions.view.grouped')}
+                            </button>
+                        ) : null}
                         <button
                             type="button"
                             onClick={handleEnableSelectionMode}
@@ -997,13 +1084,39 @@ export function SessionList(props: {
 
             <div ref={listContainerRef} className="flex flex-col">
                 {displayGroups.map((group) => {
+                    if (isFlat) {
+                        return (
+                            <div key={FLAT_DIRECTORY_KEY} className="flex flex-col divide-y divide-[var(--app-divider)]">
+                                {group.sessions.map((session) => (
+                                    <SessionItem
+                                        key={session.id}
+                                        session={session}
+                                        onSelect={handleSessionSelect}
+                                        onToggleSelected={toggleSelectedSession}
+                                        showPath={false}
+                                        projectLabel={getGroupDisplayName(
+                                            session.metadata?.worktree?.basePath
+                                            ?? session.metadata?.path
+                                            ?? 'Other'
+                                        )}
+                                        api={api}
+                                        selected={session.id === selectedSessionId}
+                                        selectionMode={selectionMode}
+                                        selectedForBulk={selectedSessionIds.has(session.id)}
+                                        unread={unreadSessionIds.has(session.id)}
+                                    />
+                                ))}
+                            </div>
+                        )
+                    }
+
                     const isCollapsed = isGroupCollapsed(group)
                     const canQuickCreateInGroup = group.directory !== 'Other'
                     const groupMachineId = group.sessions[0]?.metadata?.machineId
                     const groupUnreadCount = group.sessions.filter(session => unreadSessionIds.has(session.id)).length
                     return (
                         <div key={group.directory}>
-                            <div className="sticky top-0 z-10 flex items-center gap-1 border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2">
+                            <div data-group-header={group.directory} className="sticky top-0 z-10 flex items-center gap-1 border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2">
                                 <button
                                     type="button"
                                     onClick={() => toggleGroup(group.directory, isCollapsed)}

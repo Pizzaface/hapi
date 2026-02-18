@@ -40,6 +40,9 @@ export default {
 
   // Sessions page
   'sessions.count': '{n} 个会话，{m} 个项目',
+  'sessions.countFlat': '{n} 个会话',
+  'sessions.view.flat': '列表',
+  'sessions.view.grouped': '分组',
   'sessions.new': '新建会话',
 
   // Session list

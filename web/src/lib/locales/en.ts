@@ -40,6 +40,9 @@ export default {
 
   // Sessions page
   'sessions.count': '{n} sessions in {m} projects',
+  'sessions.countFlat': '{n} sessions',
+  'sessions.view.flat': 'Flat',
+  'sessions.view.grouped': 'Grouped',
   'sessions.new': 'New Session',
 
   // Session list
