@@ -138,18 +138,8 @@ export class Logger {
     return this.logFilePath
   }
   
-  private logToConsole(level: 'debug' | 'error' | 'info' | 'warn', prefix: string, message: string, ...args: unknown[]): void {
+  private logToConsole(level: 'info' | 'warn', prefix: string, message: string, ...args: unknown[]): void {
     switch (level) {
-      case 'debug': {
-        console.log(chalk.gray(prefix), message, ...args)
-        break
-      }
-
-      case 'error': {
-        console.error(chalk.red(prefix), message, ...args)
-        break
-      }
-
       case 'info': {
         console.log(chalk.blue(prefix), message, ...args)
         break
@@ -157,12 +147,6 @@ export class Logger {
 
       case 'warn': {
         console.log(chalk.yellow(prefix), message, ...args)
-        break
-      }
-
-      default: {
-        this.debug('Unknown log level:', level)
-        console.log(chalk.blue(prefix), message, ...args)
         break
       }
     }
