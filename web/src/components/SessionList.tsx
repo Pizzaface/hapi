@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSwipeable, type SwipeEventData } from 'react-swipeable'
 import type { SessionSummary } from '@/types/api'
 import type { ApiClient } from '@/api/client'
@@ -168,6 +168,7 @@ function SessionItem(props: {
     showPath?: boolean
     api: ApiClient | null
     selected?: boolean
+    unread?: boolean
 }) {
     const { t } = useTranslation()
     const { session: s, onSelect, showPath = true, api, selected = false } = props
@@ -290,6 +291,11 @@ function SessionItem(props: {
                                     {t('session.item.thinking')}
                                 </span>
                             ) : null}
+                            {props.unread ? (
+                                <span className="text-[#34C759]">
+                                    {t('session.item.unread')}
+                                </span>
+                            ) : null}
                             {(() => {
                                 const progress = getTodoProgress(s)
                                 if (!progress) return null
@@ -387,6 +393,45 @@ export function SessionList(props: {
 }) {
     const { t } = useTranslation()
     const { renderHeader = true, api, selectedSessionId } = props
+
+    // Track which sessions have unread messages (new content arrived while not viewing)
+    const prevUpdatedAtRef = useRef<Map<string, number>>(new Map())
+    const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => new Set())
+
+    useEffect(() => {
+        const prevUpdatedAt = prevUpdatedAtRef.current
+        const nextUpdatedAt = new Map<string, number>()
+
+        setUnreadSessionIds(prev => {
+            let next = prev
+            for (const s of props.sessions) {
+                nextUpdatedAt.set(s.id, s.updatedAt)
+                const prevTs = prevUpdatedAt.get(s.id)
+                // updatedAt increased and session is not currently selected: mark unread
+                if (prevTs !== undefined && s.updatedAt > prevTs && s.id !== selectedSessionId) {
+                    if (!next.has(s.id)) {
+                        next = new Set(next)
+                        next.add(s.id)
+                    }
+                }
+            }
+            return next
+        })
+
+        prevUpdatedAtRef.current = nextUpdatedAt
+    }, [props.sessions, selectedSessionId])
+
+    // Clear unread for the currently selected session
+    useEffect(() => {
+        if (selectedSessionId && unreadSessionIds.has(selectedSessionId)) {
+            setUnreadSessionIds(prev => {
+                const next = new Set(prev)
+                next.delete(selectedSessionId)
+                return next
+            })
+        }
+    }, [selectedSessionId, unreadSessionIds])
+
     const groups = useMemo(
         () => groupSessionsByDirectory(props.sessions),
         [props.sessions]
@@ -447,6 +492,7 @@ export function SessionList(props: {
                     const isCollapsed = isGroupCollapsed(group)
                     const canQuickCreateInGroup = group.directory !== 'Other'
                     const groupMachineId = group.sessions[0]?.metadata?.machineId
+                    const groupUnreadCount = group.sessions.filter(s => unreadSessionIds.has(s.id)).length
                     return (
                         <div key={group.directory}>
                             <div className="sticky top-0 z-10 flex items-center gap-1 border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2">
@@ -466,6 +512,11 @@ export function SessionList(props: {
                                         <span className="shrink-0 text-xs text-[var(--app-hint)]">
                                             ({group.sessions.length})
                                         </span>
+                                        {groupUnreadCount > 0 ? (
+                                            <span className="shrink-0 text-xs text-[#34C759]">
+                                                {groupUnreadCount} {t('session.item.unread')}
+                                            </span>
+                                        ) : null}
                                     </div>
                                 </button>
                                 {canQuickCreateInGroup ? (
@@ -493,6 +544,7 @@ export function SessionList(props: {
                                             showPath={false}
                                             api={api}
                                             selected={s.id === selectedSessionId}
+                                            unread={unreadSessionIds.has(s.id)}
                                         />
                                     ))}
                                 </div>

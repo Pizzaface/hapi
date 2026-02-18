@@ -270,4 +270,7 @@ export default {
   'misc.permissionRequired': 'permission required',
   'misc.percentLeft': '{percent}% left',
   'misc.online': 'online',
+
+  // Session list
+  'session.item.unread': 'unread',
 } as const

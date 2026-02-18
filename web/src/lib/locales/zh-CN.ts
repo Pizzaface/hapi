@@ -272,4 +272,7 @@ export default {
   'misc.permissionRequired': '需要权限',
   'misc.percentLeft': '剩余 {percent}%',
   'misc.online': '在线',
+
+  // Session list
+  'session.item.unread': '未读',
 } as const
