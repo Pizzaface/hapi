@@ -11,6 +11,7 @@ import { CodexDisplay } from '@/ui/ink/CodexDisplay';
 import type { CodexSessionConfig } from './types';
 import { buildHapiMcpBridge } from './utils/buildHapiMcpBridge';
 import { emitReadyIfIdle } from './utils/emitReadyIfIdle';
+import { isCodexThinkingActivityEvent, ThinkingStateTracker } from './utils/thinkingStateTracker';
 import type { CodexSession } from './session';
 import type { EnhancedMode } from './loop';
 import { hasCodexCliOverrides } from './utils/codexCliOverrides';
@@ -40,6 +41,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
     private reasoningProcessor: ReasoningProcessor | null = null;
     private diffProcessor: DiffProcessor | null = null;
     private happyServer: HappyServer | null = null;
+    private thinkingStateTracker: ThinkingStateTracker | null = null;
     private abortController: AbortController = new AbortController();
     private currentThreadId: string | null = null;
     private currentTurnId: string | null = null;
@@ -79,7 +81,11 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             this.permissionHandler?.reset();
             this.reasoningProcessor?.abort();
             this.diffProcessor?.reset();
-            this.session.onThinkingChange(false);
+            if (this.thinkingStateTracker) {
+                this.thinkingStateTracker.reset();
+            } else {
+                this.session.onThinkingChange(false);
+            }
             logger.debug('[Codex] Abort completed - session remains active');
         } catch (error) {
             logger.debug('[Codex] Error during abort:', error);
@@ -236,6 +242,11 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         this.permissionHandler = permissionHandler;
         this.reasoningProcessor = reasoningProcessor;
         this.diffProcessor = diffProcessor;
+        const thinkingStateTracker = new ThinkingStateTracker({
+            getThinking: () => session.thinking,
+            onThinkingChange: (thinking) => session.onThinkingChange(thinking)
+        });
+        this.thinkingStateTracker = thinkingStateTracker;
 
         const handleCodexEvent = (msg: Record<string, unknown>) => {
             const msgType = asString(msg.type);
@@ -269,6 +280,10 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     const payloadType = asString(payload?.type);
                     logger.debug(`[Codex] MCP wrapper event type: ${msgType}${payloadType ? ` (payload=${payloadType})` : ''}`);
                 }
+            }
+
+            if (isCodexThinkingActivityEvent(msgType)) {
+                thinkingStateTracker.markActivity();
             }
 
             if (msgType === 'agent_message') {
@@ -420,19 +435,15 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 if (useAppServer) {
                     turnInFlight = true;
                 }
-                if (!session.thinking) {
-                    logger.debug('thinking started');
-                    session.onThinkingChange(true);
-                }
+                logger.debug('thinking started');
+                thinkingStateTracker.startProcessing();
             }
             if (msgType === 'task_complete' || msgType === 'turn_aborted' || msgType === 'task_failed') {
                 if (useAppServer) {
                     turnInFlight = false;
                 }
-                if (session.thinking) {
-                    logger.debug('thinking completed');
-                    session.onThinkingChange(false);
-                }
+                logger.debug('thinking completion signaled');
+                thinkingStateTracker.markSettledSoon();
                 diffProcessor.reset();
                 appServerEventConverter?.reset();
             }
@@ -808,7 +819,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 permissionHandler.reset();
                 reasoningProcessor.abort();
                 diffProcessor.reset();
-                session.onThinkingChange(false);
+                thinkingStateTracker.reset();
                 if (isNewCommand) {
                     session.sendSessionEvent({ type: 'message', message: 'Started a new conversation' });
                 } else if (isClearCommand) {
@@ -829,7 +840,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 permissionHandler.reset();
                 reasoningProcessor.abort();
                 diffProcessor.reset();
-                session.onThinkingChange(false);
+                thinkingStateTracker.reset();
                 continue;
             }
 
@@ -837,7 +848,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             currentModeHash = message.hash;
 
             // Signal thinking immediately when processing begins (matches Claude behavior)
-            session.onThinkingChange(true);
+            thinkingStateTracker.startProcessing();
 
             try {
                 if (!wasCreated) {
@@ -1029,7 +1040,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 diffProcessor.reset();
                 if (!useAppServer || !turnInFlight) {
                     appServerEventConverter?.reset();
-                    session.onThinkingChange(false);
+                    thinkingStateTracker.markSettledSoon();
                 }
                 if (!useAppServer || !turnInFlight) {
                     emitReadyIfIdle({
@@ -1067,9 +1078,11 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         this.permissionHandler?.reset();
         this.reasoningProcessor?.abort();
         this.diffProcessor?.reset();
+        this.thinkingStateTracker?.dispose();
         this.permissionHandler = null;
         this.reasoningProcessor = null;
         this.diffProcessor = null;
+        this.thinkingStateTracker = null;
 
         logger.debug('[codex-remote]: cleanup done');
     }
