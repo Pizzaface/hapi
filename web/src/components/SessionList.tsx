@@ -12,7 +12,6 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { clearMessageWindow } from '@/lib/message-window-store'
 import { queryKeys } from '@/lib/query-keys'
 import { useTranslation } from '@/lib/use-translation'
-import { useListTransition } from '@/hooks/useListTransition'
 
 const SESSION_READ_HISTORY_KEY = 'hapi:sessionReadHistory'
 
@@ -281,7 +280,7 @@ function useFrozenGroups(
     selectedSessionId: string | null | undefined,
     sessions: SessionSummary[],
     viewKey: 'grouped' | 'flat'
-): { displayGroups: SessionGroup[]; unfreezeCount: number } {
+): { displayGroups: SessionGroup[] } {
     const stateRef = useRef<FreezeState>({
         frozenGroups: null,
         prevSelectedSessionId: null,
@@ -295,8 +294,7 @@ function useFrozenGroups(
     stateRef.current = result
 
     return {
-        displayGroups: result.displayGroups,
-        unfreezeCount: result.unfreezeCount
+        displayGroups: result.displayGroups
     }
 }
 
@@ -834,7 +832,7 @@ export function SessionList(props: {
         [props.sessions, readHistory, unreadSessionIds, isFlat]
     )
 
-    const { displayGroups, unfreezeCount } = useFrozenGroups(
+    const { displayGroups } = useFrozenGroups(
         liveGroups,
         selectedSessionId,
         props.sessions,
@@ -843,12 +841,6 @@ export function SessionList(props: {
 
     const listContainerRef = useRef<HTMLDivElement>(null)
 
-    useListTransition({
-        listContainerRef,
-        scrollContainerRef: props.scrollContainerRef,
-        selectedSessionId,
-        unfreezeCount
-    })
 
     const sessionById = useMemo(
         () => new Map(props.sessions.map(session => [session.id, session])),
