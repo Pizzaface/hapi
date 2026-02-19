@@ -41,6 +41,8 @@ export default {
   // Sessions page
   'sessions.count': '{n} sessions in {m} projects',
   'sessions.new': 'New Session',
+  'sessions.empty.title': 'No sessions found',
+  'sessions.empty.description': 'Create a new session to get started.',
 
   // Session list
   'session.item.path': 'path',

@@ -41,6 +41,8 @@ export default {
   // Sessions page
   'sessions.count': '{n} 个会话，{m} 个项目',
   'sessions.new': '新建会话',
+  'sessions.empty.title': '暂无会话',
+  'sessions.empty.description': '创建一个新会话以开始。',
 
   // Session list
   'session.item.path': '路径',
