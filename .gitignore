@@ -35,6 +35,7 @@ coverage/
 
 # Local rebuild script + runtime files
 rebuild.sh
+rebuild.ts
 hub.pid
 
 # Claude local settings
