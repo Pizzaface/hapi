@@ -8,6 +8,7 @@ import { useSessionActions } from '@/hooks/mutations/useSessionActions'
 import { SessionActionMenu } from '@/components/SessionActionMenu'
 import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { LoadingState } from '@/components/LoadingState'
 import { useTranslation } from '@/lib/use-translation'
 
 type SessionGroup = {
@@ -556,6 +557,36 @@ export function SessionList(props: {
         })
     }, [groups])
 
+    if (props.isLoading && props.sessions.length === 0) {
+        return (
+            <div className="flex-1 flex items-center justify-center p-8">
+                <LoadingState label={t('loading.session')} />
+            </div>
+        )
+    }
+
+    if (!props.isLoading && props.sessions.length === 0) {
+        return (
+            <div className="flex flex-col flex-1 items-center justify-center p-8 text-center text-[var(--app-hint)]">
+                <div className="mb-2 rounded-full bg-[var(--app-subtle-bg)] p-4">
+                    <PlusIcon className="h-8 w-8 text-[var(--app-hint)]" />
+                </div>
+                <h3 className="mb-1 text-sm font-medium text-[var(--app-fg)]">
+                    {t('sessions.empty.title')}
+                </h3>
+                <p className="text-xs">{t('sessions.empty.description')}</p>
+                <button
+                    type="button"
+                    onClick={() => props.onNewSession()}
+                    className="mt-4 rounded-md bg-[var(--app-link)] px-4 py-2 text-xs font-medium text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--app-link)]"
+                    aria-label={t('sessions.new')}
+                >
+                    {t('sessions.new')}
+                </button>
+            </div>
+        )
+    }
+
     return (
         <div className="mx-auto w-full max-w-content flex flex-col">
             {renderHeader ? (
@@ -566,8 +597,9 @@ export function SessionList(props: {
                     <button
                         type="button"
                         onClick={() => props.onNewSession()}
-                        className="session-list-new-button p-1.5 rounded-full text-[var(--app-link)] transition-colors"
+                        className="session-list-new-button p-1.5 rounded-full text-[var(--app-link)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
                         title={t('sessions.new')}
+                        aria-label={t('sessions.new')}
                     >
                         <PlusIcon className="h-5 w-5" />
                     </button>
