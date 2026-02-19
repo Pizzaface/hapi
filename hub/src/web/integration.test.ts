@@ -499,4 +499,109 @@ describe('web integration routes', () => {
             ctx.stop()
         }
     })
+
+    it('gets session beads and enforces access checks', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const alphaToken = await getAccessToken(ctx.app, 'alpha')
+            const betaToken = await getAccessToken(ctx.app, 'beta')
+
+            const alphaSession = ctx.engine.getOrCreateSession(
+                'alpha-beads',
+                { path: '/alpha-repo', host: 'host-a', machineId: 'machine-a' },
+                null,
+                'alpha'
+            )
+            const betaSession = ctx.engine.getOrCreateSession(
+                'beta-beads',
+                { path: '/beta-repo', host: 'host-b', machineId: 'machine-b' },
+                null,
+                'beta'
+            )
+
+            ctx.store.sessionBeads.linkBead(alphaSession.id, 'hapi-6uf')
+            ctx.store.sessionBeads.saveSnapshot(alphaSession.id, 'hapi-6uf', {
+                id: 'hapi-6uf',
+                title: 'Beads UI',
+                status: 'in_progress',
+                priority: 2,
+                acceptance_criteria: '- render panel'
+            }, 123)
+
+            const success = await ctx.app.request(`/api/sessions/${alphaSession.id}/beads`, {
+                headers: authHeaders(alphaToken)
+            })
+            expect(success.status).toBe(200)
+            expect(await success.json()).toEqual({
+                beads: [{
+                    id: 'hapi-6uf',
+                    title: 'Beads UI',
+                    status: 'in_progress',
+                    priority: 2,
+                    acceptance_criteria: '- render panel'
+                }],
+                stale: false
+            })
+
+            const wrongNamespace = await ctx.app.request(`/api/sessions/${betaSession.id}/beads`, {
+                headers: authHeaders(alphaToken)
+            })
+            expect(wrongNamespace.status).toBe(403)
+
+            const unknown = await ctx.app.request('/api/sessions/does-not-exist/beads', {
+                headers: authHeaders(alphaToken)
+            })
+            expect(unknown.status).toBe(404)
+
+            const betaOwn = await ctx.app.request(`/api/sessions/${betaSession.id}/beads`, {
+                headers: authHeaders(betaToken)
+            })
+            expect(betaOwn.status).toBe(200)
+            expect(await betaOwn.json()).toEqual({ beads: [], stale: false })
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('marks beads response stale when refresh fails', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const token = await getAccessToken(ctx.app, 'alpha')
+
+            const session = ctx.engine.getOrCreateSession(
+                'alpha-beads-stale',
+                { path: '/alpha-repo', host: 'host-a', machineId: 'machine-a' },
+                null,
+                'alpha'
+            )
+            ctx.engine.handleSessionAlive({ sid: session.id, time: Date.now() })
+            ctx.store.sessionBeads.linkBead(session.id, 'hapi-6uf')
+            ctx.store.sessionBeads.saveSnapshot(session.id, 'hapi-6uf', {
+                id: 'hapi-6uf',
+                title: 'Cached bead',
+                status: 'open',
+                priority: 3
+            }, 123)
+
+            const response = await ctx.app.request(`/api/sessions/${session.id}/beads`, {
+                headers: authHeaders(token)
+            })
+
+            expect(response.status).toBe(200)
+            expect(await response.json()).toEqual({
+                beads: [{
+                    id: 'hapi-6uf',
+                    title: 'Cached bead',
+                    status: 'open',
+                    priority: 3
+                }],
+                stale: true
+            })
+        } finally {
+            ctx.stop()
+        }
+    })
+
 })

@@ -7,12 +7,14 @@
  * - No E2E encryption; data is stored as JSON in SQLite
  */
 
-import type { DecryptedMessage, ModelMode, PermissionMode, Session, SyncEvent } from '@hapi/protocol/types'
+import type { BeadSummary, DecryptedMessage, ModelMode, PermissionMode, Session, SyncEvent } from '@hapi/protocol/types'
 import type { Server } from 'socket.io'
 import type { Store } from '../store'
 import type { RpcRegistry } from '../socket/rpcRegistry'
 import type { SSEManager } from '../sse/sseManager'
 import { EventPublisher, type SyncEventListener } from './eventPublisher'
+import { BeadGateway } from './beadGateway'
+import { BeadService } from './beadService'
 import { MachineCache, type Machine } from './machineCache'
 import { MessageService } from './messageService'
 import {
@@ -48,6 +50,8 @@ export class SyncEngine {
     private readonly machineCache: MachineCache
     private readonly messageService: MessageService
     private readonly rpcGateway: RpcGateway
+    private readonly beadGateway: BeadGateway
+    private readonly beadService: BeadService
     private inactivityTimer: NodeJS.Timeout | null = null
 
     constructor(
@@ -61,6 +65,14 @@ export class SyncEngine {
         this.machineCache = new MachineCache(store, this.eventPublisher)
         this.messageService = new MessageService(store, io, this.eventPublisher)
         this.rpcGateway = new RpcGateway(io, rpcRegistry)
+        this.beadGateway = new BeadGateway(this.rpcGateway)
+        this.beadService = new BeadService({
+            store,
+            getSession: (sessionId) => this.getSession(sessionId),
+            getActiveSessions: () => this.sessionCache.getActiveSessions(),
+            gateway: this.beadGateway,
+            emitEvent: (event) => this.eventPublisher.emit(event)
+        })
         this.reloadAll()
         this.inactivityTimer = setInterval(() => this.expireInactive(), 5_000)
     }
@@ -70,6 +82,7 @@ export class SyncEngine {
             clearInterval(this.inactivityTimer)
             this.inactivityTimer = null
         }
+        this.beadService.stop()
     }
 
     subscribe(listener: SyncEventListener): () => void {
@@ -108,6 +121,10 @@ export class SyncEngine {
             return undefined
         }
         return session
+    }
+
+    async getSessionBeads(sessionId: string): Promise<{ beads: BeadSummary[]; stale: boolean }> {
+        return await this.beadService.getSessionBeads(sessionId)
     }
 
     resolveSessionAccess(
@@ -194,6 +211,10 @@ export class SyncEngine {
 
     handleSessionEnd(payload: { sid: string; time: number }): void {
         this.sessionCache.handleSessionEnd(payload)
+    }
+
+    handleBeadLinked(payload: { sid: string; beadId: string }): void {
+        this.beadService.linkBead(payload.sid, payload.beadId)
     }
 
     handleMachineAlive(payload: { machineId: string; time: number }): void {

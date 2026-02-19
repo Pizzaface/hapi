@@ -83,6 +83,21 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         return c.json({ session: sessionResult.session })
     })
 
+    app.get('/sessions/:id/beads', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) {
+            return engine
+        }
+
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) {
+            return sessionResult
+        }
+
+        const result = await engine.getSessionBeads(sessionResult.sessionId)
+        return c.json(result)
+    })
+
     app.post('/sessions/:id/resume', async (c) => {
         const engine = requireSyncEngine(c, getSyncEngine)
         if (engine instanceof Response) {

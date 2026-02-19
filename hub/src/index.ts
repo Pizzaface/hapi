@@ -178,6 +178,7 @@ async function main() {
         onWebappEvent: (event: SyncEvent) => syncEngine?.handleRealtimeEvent(event),
         onSessionAlive: (payload) => syncEngine?.handleSessionAlive(payload),
         onSessionEnd: (payload) => syncEngine?.handleSessionEnd(payload),
+        onBeadLinked: (payload) => syncEngine?.handleBeadLinked(payload),
         onMachineAlive: (payload) => syncEngine?.handleMachineAlive(payload)
     })
 

@@ -15,10 +15,12 @@ import { createAttachmentAdapter } from '@/lib/attachmentAdapter'
 import { SessionHeader } from '@/components/SessionHeader'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useSessionActions } from '@/hooks/mutations/useSessionActions'
+import { useSessionBeads } from '@/hooks/queries/useSessionBeads'
 import { useVoiceOptional } from '@/lib/voice-context'
 import { RealtimeVoiceSession, registerSessionStore, registerVoiceHooksStore, voiceHooks } from '@/realtime'
 import { McpInfoDialog } from '@/components/McpInfoDialog'
 import { SessionTodoPanel } from '@/components/SessionTodoPanel'
+import { SessionBeadPanel } from '@/components/SessionBeadPanel'
 import { isClaudeFlavor } from '@/lib/agentFlavorUtils'
 
 export function SessionChat(props: {
@@ -57,6 +59,7 @@ export function SessionChat(props: {
         props.session.id,
         agentFlavor
     )
+    const { beads, stale: beadsStale } = useSessionBeads(props.api, props.session.id)
 
     // Voice assistant integration
     const voice = useVoiceOptional()
@@ -300,6 +303,8 @@ export function SessionChat(props: {
                 api={props.api}
                 onSessionDeleted={props.onBack}
             />
+
+            <SessionBeadPanel beads={beads} stale={beadsStale} />
 
             <SessionTodoPanel todos={props.session.todos} />
 

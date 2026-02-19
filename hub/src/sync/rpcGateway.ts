@@ -234,15 +234,27 @@ export class RpcGateway {
         }
     }
 
-    private async sessionRpc(sessionId: string, method: string, params: unknown): Promise<unknown> {
-        return await this.rpcCall(`${sessionId}:${method}`, params)
+    async showSessionBeads(sessionId: string, beadIds: string[], timeoutMs: number = 10_000): Promise<unknown> {
+        return await this.sessionRpc(sessionId, 'beads.show', { beadIds }, timeoutMs)
     }
 
-    private async machineRpc(machineId: string, method: string, params: unknown): Promise<unknown> {
-        return await this.rpcCall(`${machineId}:${method}`, params)
+    async showMachineBeads(machineId: string, repoPath: string, beadIds: string[], timeoutMs: number = 10_000): Promise<unknown> {
+        return await this.machineRpc(machineId, 'beads.show', { repoPath, beadIds }, timeoutMs)
     }
 
-    private async rpcCall(method: string, params: unknown): Promise<unknown> {
+    async listSessionBeads(sessionId: string, timeoutMs: number = 10_000): Promise<unknown> {
+        return await this.sessionRpc(sessionId, 'beads.list', {}, timeoutMs)
+    }
+
+    private async sessionRpc(sessionId: string, method: string, params: unknown, timeoutMs: number = 30_000): Promise<unknown> {
+        return await this.rpcCall(`${sessionId}:${method}`, params, timeoutMs)
+    }
+
+    private async machineRpc(machineId: string, method: string, params: unknown, timeoutMs: number = 30_000): Promise<unknown> {
+        return await this.rpcCall(`${machineId}:${method}`, params, timeoutMs)
+    }
+
+    private async rpcCall(method: string, params: unknown, timeoutMs: number = 30_000): Promise<unknown> {
         const socketId = this.rpcRegistry.getSocketIdForMethod(method)
         if (!socketId) {
             throw new Error(`RPC handler not registered: ${method}`)
@@ -253,7 +265,7 @@ export class RpcGateway {
             throw new Error(`RPC socket disconnected: ${method}`)
         }
 
-        const response = await socket.timeout(30_000).emitWithAck('rpc-request', {
+        const response = await socket.timeout(timeoutMs).emitWithAck('rpc-request', {
             method,
             params: JSON.stringify(params)
         }) as unknown

@@ -7,6 +7,7 @@
     "types": "./src/index.ts",
     "exports": {
         ".": "./src/index.ts",
+        "./beads": "./src/beads.ts",
         "./messages": "./src/messages.ts",
         "./modes": "./src/modes.ts",
         "./schemas": "./src/schemas.ts",

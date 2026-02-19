@@ -120,6 +120,7 @@ export function useSSE(options: {
                         setSubscriptionId(nextId)
                     }
                 }
+                void queryClient.invalidateQueries({ queryKey: queryKeys.sessionBeadsAll })
             }
 
             if (event.type === 'toast') {
@@ -145,6 +146,10 @@ export function useSSE(options: {
 
             if (event.type === 'machine-updated') {
                 void queryClient.invalidateQueries({ queryKey: queryKeys.machines })
+            }
+
+            if (event.type === 'beads-updated') {
+                void queryClient.invalidateQueries({ queryKey: queryKeys.sessionBeads(event.sessionId) })
             }
 
             onEventRef.current(event)

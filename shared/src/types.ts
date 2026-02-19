@@ -10,6 +10,7 @@ export type {
     TodoItem,
     WorktreeMetadata
 } from './schemas'
+export type { BeadSummary } from './beads'
 
 export type { SessionSummary, SessionSummaryMetadata } from './sessionSummary'
 

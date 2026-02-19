@@ -25,6 +25,7 @@ import type {
     UploadFileResponse,
     VisibilityPayload,
     SessionResponse,
+    SessionBeadsResponse,
     SessionsResponse
 } from '@/types/api'
 
@@ -222,6 +223,10 @@ export class ApiClient {
 
     async getSession(sessionId: string): Promise<SessionResponse> {
         return await this.request<SessionResponse>(`/api/sessions/${encodeURIComponent(sessionId)}`)
+    }
+
+    async getSessionBeads(sessionId: string): Promise<SessionBeadsResponse> {
+        return await this.request<SessionBeadsResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/beads`)
     }
 
     async getMessages(sessionId: string, options: { beforeSeq?: number | null; limit?: number }): Promise<MessagesResponse> {

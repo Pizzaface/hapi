@@ -6,14 +6,17 @@ import { MachineStore } from './machineStore'
 import { MessageStore } from './messageStore'
 import { PushStore } from './pushStore'
 import { SessionStore } from './sessionStore'
+import { SessionBeadStore } from './sessionBeadStore'
 import { UserStore } from './userStore'
 import { UserPreferencesStore } from './userPreferencesStore'
 
 export type {
     StoredMachine,
     StoredMessage,
+    StoredBeadSnapshot,
     StoredPushSubscription,
     StoredSession,
+    StoredSessionBead,
     StoredUser,
     VersionedUpdateResult
 } from './types'
@@ -21,16 +24,19 @@ export { MachineStore } from './machineStore'
 export { MessageStore } from './messageStore'
 export { PushStore } from './pushStore'
 export { SessionStore } from './sessionStore'
+export { SessionBeadStore } from './sessionBeadStore'
 export { UserStore } from './userStore'
 
-const SCHEMA_VERSION: number = 4
+const SCHEMA_VERSION: number = 5
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
     'messages',
     'users',
     'push_subscriptions',
-    'user_preferences'
+    'user_preferences',
+    'session_beads',
+    'bead_snapshots'
 ] as const
 
 export class Store {
@@ -43,6 +49,7 @@ export class Store {
     readonly users: UserStore
     readonly push: PushStore
     readonly userPreferences: UserPreferencesStore
+    readonly sessionBeads: SessionBeadStore
 
     constructor(dbPath: string) {
         this.dbPath = dbPath
@@ -85,6 +92,7 @@ export class Store {
         this.users = new UserStore(this.db)
         this.push = new PushStore(this.db)
         this.userPreferences = new UserPreferencesStore(this.db)
+        this.sessionBeads = new SessionBeadStore(this.db)
     }
 
     private initSchema(): void {
@@ -102,26 +110,34 @@ export class Store {
             return
         }
 
-        if (currentVersion === 1 && SCHEMA_VERSION === 2) {
+        let version = currentVersion
+
+        if (version < 2) {
             this.migrateFromV1ToV2()
-            this.setUserVersion(SCHEMA_VERSION)
-            return
+            version = 2
+            this.setUserVersion(version)
         }
 
-        if (currentVersion === 2 && SCHEMA_VERSION === 3) {
+        if (version < 3) {
             this.migrateFromV2ToV3()
-            this.setUserVersion(SCHEMA_VERSION)
-            return
+            version = 3
+            this.setUserVersion(version)
         }
 
-        if (currentVersion === 3 && SCHEMA_VERSION === 4) {
+        if (version < 4) {
             this.migrateFromV3ToV4()
-            this.setUserVersion(SCHEMA_VERSION)
-            return
+            version = 4
+            this.setUserVersion(version)
         }
 
-        if (currentVersion !== SCHEMA_VERSION) {
-            throw this.buildSchemaMismatchError(currentVersion)
+        if (version < 5) {
+            this.migrateFromV4ToV5()
+            version = 5
+            this.setUserVersion(version)
+        }
+
+        if (version !== SCHEMA_VERSION) {
+            throw this.buildSchemaMismatchError(version)
         }
 
         this.assertRequiredTablesPresent()
@@ -203,6 +219,24 @@ export class Store {
                 ready_announcements INTEGER NOT NULL DEFAULT 1,
                 updated_at INTEGER NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS session_beads (
+                session_id TEXT NOT NULL,
+                bead_id TEXT NOT NULL,
+                linked_at INTEGER NOT NULL,
+                linked_by TEXT,
+                PRIMARY KEY (session_id, bead_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_beads_session_id ON session_beads(session_id);
+
+            CREATE TABLE IF NOT EXISTS bead_snapshots (
+                session_id TEXT NOT NULL,
+                bead_id TEXT NOT NULL,
+                data_json TEXT NOT NULL,
+                fetched_at INTEGER NOT NULL,
+                PRIMARY KEY (session_id, bead_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_bead_snapshots_session_id ON bead_snapshots(session_id);
         `)
     }
 
@@ -303,6 +337,28 @@ export class Store {
                 ready_announcements INTEGER NOT NULL DEFAULT 1,
                 updated_at INTEGER NOT NULL
             );
+        `)
+    }
+
+    private migrateFromV4ToV5(): void {
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS session_beads (
+                session_id TEXT NOT NULL,
+                bead_id TEXT NOT NULL,
+                linked_at INTEGER NOT NULL,
+                linked_by TEXT,
+                PRIMARY KEY (session_id, bead_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_beads_session_id ON session_beads(session_id);
+
+            CREATE TABLE IF NOT EXISTS bead_snapshots (
+                session_id TEXT NOT NULL,
+                bead_id TEXT NOT NULL,
+                data_json TEXT NOT NULL,
+                fetched_at INTEGER NOT NULL,
+                PRIMARY KEY (session_id, bead_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_bead_snapshots_session_id ON bead_snapshots(session_id);
         `)
     }
 

@@ -142,6 +142,7 @@ export interface ClientToServerEvents {
         modelMode?: ModelMode
     }) => void
     'session-end': (data: { sid: string; time: number }) => void
+    'bead-linked': (data: { sid: string; beadId: string }) => void
     'update-metadata': (data: { sid: string; expectedVersion: number; metadata: unknown }, cb: (answer: {
         result: 'error'
         reason?: SocketErrorReason

@@ -279,6 +279,7 @@ export class SessionCache {
         this.sessions.delete(sessionId)
         this.lastBroadcastAtBySessionId.delete(sessionId)
         this.todoBackfillAttemptedSessionIds.delete(sessionId)
+        this.store.sessionBeads.deleteSession(sessionId)
 
         this.publisher.emit({ type: 'session-removed', sessionId, namespace: session.namespace })
     }
@@ -325,6 +326,8 @@ export class SessionCache {
                 namespace
             )
         }
+
+        this.store.sessionBeads.reassignSession(oldSessionId, newSessionId)
 
         const deleted = this.store.sessions.deleteSession(oldSessionId, namespace)
         if (!deleted) {

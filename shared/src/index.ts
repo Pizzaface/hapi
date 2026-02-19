@@ -1,4 +1,5 @@
 export * from './messages'
+export * from './beads'
 export * from './modes'
 export * from './socket'
 export * from './sessionSummary'

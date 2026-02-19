@@ -62,6 +62,21 @@ export type StoredUserPreferences = {
     updatedAt: number
 }
 
+
+export type StoredSessionBead = {
+    sessionId: string
+    beadId: string
+    linkedAt: number
+    linkedBy: string | null
+}
+
+export type StoredBeadSnapshot = {
+    sessionId: string
+    beadId: string
+    data: unknown
+    fetchedAt: number
+}
+
 export type VersionedUpdateResult<T> =
     | { result: 'success'; version: number; value: T }
     | { result: 'version-mismatch'; version: number; value: T }

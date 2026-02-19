@@ -178,6 +178,10 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
         type: z.literal('machine-updated'),
         data: z.unknown().optional()
     }),
+    SessionChangedSchema.extend({
+        type: z.literal('beads-updated'),
+        version: z.number().int().nonnegative()
+    }),
     SessionEventBaseSchema.extend({
         type: z.literal('toast'),
         data: z.object({

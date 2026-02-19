@@ -24,6 +24,11 @@ type SessionEndPayload = {
     time: number
 }
 
+type BeadLinkedPayload = {
+    sid: string
+    beadId: string
+}
+
 type MachineAlivePayload = {
     machineId: string
     time: number
@@ -36,12 +41,13 @@ export type CliHandlersDeps = {
     terminalRegistry: TerminalRegistry
     onSessionAlive?: (payload: SessionAlivePayload) => void
     onSessionEnd?: (payload: SessionEndPayload) => void
+    onBeadLinked?: (payload: BeadLinkedPayload) => void
     onMachineAlive?: (payload: MachineAlivePayload) => void
     onWebappEvent?: (event: SyncEvent) => void
 }
 
 export function registerCliHandlers(socket: CliSocketWithData, deps: CliHandlersDeps): void {
-    const { io, store, rpcRegistry, terminalRegistry, onSessionAlive, onSessionEnd, onMachineAlive, onWebappEvent } = deps
+    const { io, store, rpcRegistry, terminalRegistry, onSessionAlive, onSessionEnd, onBeadLinked, onMachineAlive, onWebappEvent } = deps
     const terminalNamespace = io.of('/terminal')
     const namespace = typeof socket.data.namespace === 'string' ? socket.data.namespace : null
 
@@ -100,6 +106,7 @@ export function registerCliHandlers(socket: CliSocketWithData, deps: CliHandlers
         emitAccessError,
         onSessionAlive,
         onSessionEnd,
+        onBeadLinked,
         onWebappEvent
     })
     registerMachineHandlers(socket, {

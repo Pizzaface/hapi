@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import type { Session, SyncEvent } from '@hapi/protocol/types'
 import { SessionCache } from './sessionCache'
-import type { Store } from '../store'
+import { Store } from '../store'
 import { EventPublisher } from './eventPublisher'
 import { SSEManager } from '../sse/sseManager'
 import { VisibilityTracker } from '../visibility/visibilityTracker'
@@ -149,5 +149,24 @@ describe('SessionCache thinking state', () => {
             e => e.type === 'session-updated' && (e as any).data?.active === false
         )
         expect(expireEvents).toHaveLength(0)
+    })
+})
+
+
+describe('SessionCache bead link merge behavior', () => {
+    it('reassigns bead links when sessions merge', async () => {
+        const store = new Store(':memory:')
+        const sseManager = new SSEManager(0, new VisibilityTracker())
+        const publisher = new EventPublisher(sseManager, () => 'default')
+        const cache = new SessionCache(store, publisher)
+
+        const oldSession = store.sessions.getOrCreateSession('old-tag', { path: '/repo', host: 'host' }, null, 'default')
+        const newSession = store.sessions.getOrCreateSession('new-tag', { path: '/repo', host: 'host' }, null, 'default')
+        store.sessionBeads.linkBead(oldSession.id, 'hapi-6uf')
+
+        await cache.mergeSessions(oldSession.id, newSession.id, 'default')
+
+        expect(store.sessionBeads.getBeadIds(oldSession.id)).toEqual([])
+        expect(store.sessionBeads.getBeadIds(newSession.id)).toContain('hapi-6uf')
     })
 })

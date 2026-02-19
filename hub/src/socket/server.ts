@@ -38,6 +38,7 @@ export type SocketServerDeps = {
     onWebappEvent?: (event: SyncEvent) => void
     onSessionAlive?: (payload: { sid: string; time: number; thinking?: boolean; mode?: 'local' | 'remote' }) => void
     onSessionEnd?: (payload: { sid: string; time: number }) => void
+    onBeadLinked?: (payload: { sid: string; beadId: string }) => void
     onMachineAlive?: (payload: { machineId: string; time: number }) => void
 }
 
@@ -113,6 +114,7 @@ export function createSocketServer(deps: SocketServerDeps): {
         onSessionAlive: deps.onSessionAlive,
         onSessionEnd: deps.onSessionEnd,
         onMachineAlive: deps.onMachineAlive,
+        onBeadLinked: deps.onBeadLinked,
         onWebappEvent: deps.onWebappEvent
     }))
 

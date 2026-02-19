@@ -245,6 +245,16 @@ describe('SyncEventSchema', () => {
         expect(result.success).toBe(true)
     })
 
+    it('accepts beads-updated event', () => {
+        const result = SyncEventSchema.safeParse({
+            type: 'beads-updated',
+            sessionId: 'session-1',
+            version: 3
+        })
+
+        expect(result.success).toBe(true)
+    })
+
     it('rejects unknown event type', () => {
         const result = SyncEventSchema.safeParse({
             type: 'session-paused',
