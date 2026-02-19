@@ -21,9 +21,43 @@ function parseToolUseError(message: string): { isToolUseError: boolean; errorMes
 function extractTextFromContentBlock(block: unknown): string | null {
     if (typeof block === 'string') return block
     if (!isObject(block)) return null
+    if (block.type === 'image') return null
     if (block.type === 'text' && typeof block.text === 'string') return block.text
     if (typeof block.text === 'string') return block.text
     return null
+}
+
+type ExtractedImage = { mediaType: string; dataUrl: string }
+
+function extractImagesFromResult(result: unknown): ExtractedImage[] {
+    const blocks = Array.isArray(result) ? result : null
+    if (!blocks) return []
+
+    const images: ExtractedImage[] = []
+    for (const block of blocks) {
+        if (!isObject(block) || block.type !== 'image' || !isObject(block.source)) continue
+        const source = block.source as Record<string, unknown>
+        if (source.type !== 'base64' || typeof source.media_type !== 'string' || typeof source.data !== 'string') continue
+        images.push({ mediaType: source.media_type, dataUrl: `data:${source.media_type};base64,${source.data}` })
+    }
+    return images
+}
+
+function ResultImages(props: { images: ExtractedImage[] }) {
+    return (
+        <>
+            {props.images.map((img, idx) => (
+                <div key={idx} className="my-2">
+                    <img
+                        src={img.dataUrl}
+                        alt="Image"
+                        className="max-w-full rounded-lg"
+                        style={{ maxHeight: '512px' }}
+                    />
+                </div>
+            ))}
+        </>
+    )
 }
 
 function extractTextFromResult(result: unknown, depth: number = 0): string | null {
@@ -271,7 +305,18 @@ const MarkdownResultView: ToolViewComponent = (props: ToolViewProps) => {
         return <div className="text-sm text-[var(--app-hint)]">{placeholderForState(props.block.tool.state)}</div>
     }
 
+    const images = extractImagesFromResult(result)
     const text = extractTextFromResult(result)
+
+    if (images.length > 0) {
+        return (
+            <>
+                {text ? renderText(text, { mode: 'auto' }) : null}
+                <ResultImages images={images} />
+            </>
+        )
+    }
+
     if (text) {
         return (
             <>
@@ -344,6 +389,17 @@ const ReadResultView: ToolViewComponent = (props: ToolViewProps) => {
 
     if (result === undefined || result === null) {
         return <div className="text-sm text-[var(--app-hint)]">{placeholderForState(props.block.tool.state)}</div>
+    }
+
+    const images = extractImagesFromResult(result)
+    if (images.length > 0) {
+        const text = extractTextFromResult(result)
+        return (
+            <>
+                {text ? renderText(text, { mode: 'code', language: 'text' }) : null}
+                <ResultImages images={images} />
+            </>
+        )
     }
 
     const file = extractReadFileContent(result)
@@ -574,6 +630,17 @@ const GenericResultView: ToolViewComponent = (props: ToolViewProps) => {
                 </>
             )
         }
+    }
+
+    const images = extractImagesFromResult(result)
+    if (images.length > 0) {
+        const text = extractTextFromResult(result)
+        return (
+            <>
+                {text ? renderText(text, { mode: 'auto' }) : null}
+                <ResultImages images={images} />
+            </>
+        )
     }
 
     const text = extractTextFromResult(result)
