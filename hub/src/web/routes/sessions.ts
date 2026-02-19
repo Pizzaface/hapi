@@ -106,7 +106,13 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
                 : result.code === 'access_denied' ? 403
                     : result.code === 'session_not_found' ? 404
                         : 500
-            return c.json({ error: result.message, code: result.code }, status)
+
+            let message = result.message
+            if (status === 500) {
+                console.error('[ResumeSession] Error:', result.message)
+                message = 'Failed to resume session'
+            }
+            return c.json({ error: message, code: result.code }, status)
         }
 
         return c.json({ type: 'success', sessionId: result.sessionId })
@@ -143,9 +149,10 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             )
             return c.json(result)
         } catch (error) {
+            console.error('[Upload] Error:', error)
             return c.json({
                 success: false,
-                error: error instanceof Error ? error.message : 'Failed to upload file'
+                error: 'Failed to upload file'
             }, 500)
         }
     })
@@ -241,9 +248,10 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             if (uploadId) {
                 await engine.uploadMultipartAbort(sessionResult.sessionId, uploadId).catch(() => {})
             }
+            console.error('[MultipartUpload] Error:', error)
             return c.json({
                 success: false,
-                error: error instanceof Error ? error.message : 'Failed to upload file'
+                error: 'Failed to upload file'
             }, 500)
         }
     })
@@ -269,9 +277,10 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             const result = await engine.deleteUploadFile(sessionResult.sessionId, parsed.data.path)
             return c.json(result)
         } catch (error) {
+            console.error('[UploadDelete] Error:', error)
             return c.json({
                 success: false,
-                error: error instanceof Error ? error.message : 'Failed to delete upload'
+                error: 'Failed to delete upload'
             }, 500)
         }
     })
@@ -287,8 +296,13 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             return sessionResult
         }
 
-        await engine.abortSession(sessionResult.sessionId)
-        return c.json({ ok: true })
+        try {
+            await engine.abortSession(sessionResult.sessionId)
+            return c.json({ ok: true })
+        } catch (error) {
+            console.error('[AbortSession] Error:', error)
+            return c.json({ error: 'Failed to abort session' }, 500)
+        }
     })
 
     app.post('/sessions/:id/archive', async (c) => {
@@ -302,8 +316,13 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             return sessionResult
         }
 
-        await engine.archiveSession(sessionResult.sessionId)
-        return c.json({ ok: true })
+        try {
+            await engine.archiveSession(sessionResult.sessionId)
+            return c.json({ ok: true })
+        } catch (error) {
+            console.error('[ArchiveSession] Error:', error)
+            return c.json({ error: 'Failed to archive session' }, 500)
+        }
     })
 
     app.post('/sessions/:id/switch', async (c) => {
@@ -317,8 +336,13 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             return sessionResult
         }
 
-        await engine.switchSession(sessionResult.sessionId, 'remote')
-        return c.json({ ok: true })
+        try {
+            await engine.switchSession(sessionResult.sessionId, 'remote')
+            return c.json({ ok: true })
+        } catch (error) {
+            console.error('[SwitchSession] Error:', error)
+            return c.json({ error: 'Failed to switch session' }, 500)
+        }
     })
 
     app.post('/sessions/:id/permission-mode', async (c) => {
@@ -354,8 +378,8 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             await engine.applySessionConfig(sessionResult.sessionId, { permissionMode: mode })
             return c.json({ ok: true })
         } catch (error) {
-            const message = error instanceof Error ? error.message : 'Failed to apply permission mode'
-            return c.json({ error: message }, 409)
+            console.error('[PermissionMode] Error:', error)
+            return c.json({ error: 'Failed to apply permission mode' }, 500)
         }
     })
 
@@ -385,8 +409,8 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             await engine.applySessionConfig(sessionResult.sessionId, { modelMode: parsed.data.model })
             return c.json({ ok: true })
         } catch (error) {
-            const message = error instanceof Error ? error.message : 'Failed to apply model mode'
-            return c.json({ error: message }, 409)
+            console.error('[ModelMode] Error:', error)
+            return c.json({ error: 'Failed to apply model mode' }, 500)
         }
     })
 
@@ -414,9 +438,10 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             const message = error instanceof Error ? error.message : 'Failed to rename session'
             // Map concurrency/version errors to 409 conflict
             if (message.includes('concurrently') || message.includes('version')) {
-                return c.json({ error: message }, 409)
+                return c.json({ error: 'Session was modified concurrently' }, 409)
             }
-            return c.json({ error: message }, 500)
+            console.error('[RenameSession] Error:', error)
+            return c.json({ error: 'Failed to rename session' }, 500)
         }
     })
 
@@ -442,9 +467,10 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             const message = error instanceof Error ? error.message : 'Failed to delete session'
             // Map "active session" error to 409 conflict (race condition: session became active)
             if (message.includes('active')) {
-                return c.json({ error: message }, 409)
+                return c.json({ error: 'Cannot delete active session' }, 409)
             }
-            return c.json({ error: message }, 500)
+            console.error('[DeleteSession] Error:', error)
+            return c.json({ error: 'Failed to delete session' }, 500)
         }
     })
 
@@ -467,10 +493,11 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             const result = await engine.listSlashCommands(sessionResult.sessionId, agent)
             return c.json(result)
         } catch (error) {
+            console.error('[SlashCommands] Error:', error)
             return c.json({
                 success: false,
-                error: error instanceof Error ? error.message : 'Failed to list slash commands'
-            })
+                error: 'Failed to list slash commands'
+            }, 500)
         }
     })
 
@@ -490,10 +517,11 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             const result = await engine.listSkills(sessionResult.sessionId)
             return c.json(result)
         } catch (error) {
+            console.error('[Skills] Error:', error)
             return c.json({
                 success: false,
-                error: error instanceof Error ? error.message : 'Failed to list skills'
-            })
+                error: 'Failed to list skills'
+            }, 500)
         }
     })
 
