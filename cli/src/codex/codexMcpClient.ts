@@ -408,27 +408,24 @@ export class CodexMcpClient {
     }
     private extractIdentifiers(response: any): void {
         const meta = response?.meta || {};
-        if (meta.sessionId) {
-            this.sessionId = meta.sessionId;
-            logger.debug('[CodexMCP] Session ID extracted:', this.sessionId);
-        } else if (response?.sessionId) {
-            this.sessionId = response.sessionId;
+
+        const extractId = (key: string): string | undefined => meta[key] || response?.[key];
+
+        const sessionId = extractId('sessionId');
+        if (sessionId) {
+            this.sessionId = sessionId;
             logger.debug('[CodexMCP] Session ID extracted:', this.sessionId);
         }
 
-        if (meta.conversationId) {
-            this.conversationId = meta.conversationId;
-            logger.debug('[CodexMCP] Conversation ID extracted:', this.conversationId);
-        } else if (response?.conversationId) {
-            this.conversationId = response.conversationId;
+        const conversationId = extractId('conversationId');
+        if (conversationId) {
+            this.conversationId = conversationId;
             logger.debug('[CodexMCP] Conversation ID extracted:', this.conversationId);
         }
 
-        if (meta.threadId) {
-            this.threadId = meta.threadId;
-            logger.debug('[CodexMCP] Thread ID extracted:', this.threadId);
-        } else if (response?.threadId) {
-            this.threadId = response.threadId;
+        const threadId = extractId('threadId');
+        if (threadId) {
+            this.threadId = threadId;
             logger.debug('[CodexMCP] Thread ID extracted:', this.threadId);
         }
 
