@@ -7,7 +7,7 @@
  */
 
 // Characters that stop the active word search
-const STOP_CHARACTERS = ['\n', ',', '(', ')', '[', ']', '{', '}', '<', '>', ';', '!', '?', '.']
+const STOP_CHARACTERS = ['\n', ',', '(', ')', '[', ']', '{', '}', '<', '>', ';', '!', '?']
 
 interface Selection {
     start: number
@@ -105,6 +105,11 @@ function findActiveWordEnd(
         if (isFilePath && (char === '/' || char === '.')) {
             endIndex++
             continue
+        }
+
+        // For non-file paths, stop at / or .
+        if (!isFilePath && (char === '/' || char === '.')) {
+            break
         }
 
         // Stop at spaces or stop characters
