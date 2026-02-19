@@ -23,7 +23,8 @@
         "test:hub": "cd hub && bun run test",
         "test:web": "cd web && bun run test",
         "clean-session": "bun run hub/scripts/cleanup-sessions.ts",
-        "release-all": "cd cli && bun run release-all"
+        "release-all": "cd cli && bun run release-all",
+        "rebuild": "bun scripts/rebuild.ts"
     },
     "devDependencies": {
         "concurrently": "^9.2.1",

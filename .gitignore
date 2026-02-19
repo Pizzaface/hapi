@@ -33,9 +33,8 @@ coverage/
 **/*.swp
 **/*.swo
 
-# Local rebuild script + runtime files
+# Local dev runtime files
 rebuild.sh
-rebuild.ts
 hub.pid
 
 # Claude local settings
