@@ -89,13 +89,19 @@ export type AgentState = z.infer<typeof AgentStateSchema>
 export const TodoItemSchema = z.object({
     content: z.string(),
     status: z.enum(['pending', 'in_progress', 'completed']),
-    priority: z.enum(['high', 'medium', 'low']),
-    id: z.string()
+    priority: z.enum(['high', 'medium', 'low']).default('medium'),
+    id: z.string().default(''),
+    activeForm: z.string().optional()
 })
 
 export type TodoItem = z.infer<typeof TodoItemSchema>
 
-export const TodosSchema = z.array(TodoItemSchema)
+export const TodosSchema = z.array(TodoItemSchema).transform(items =>
+    items.map((item, i) => ({
+        ...item,
+        id: item.id || `todo-${i + 1}`
+    }))
+)
 
 export const AttachmentMetadataSchema = z.object({
     id: z.string(),
