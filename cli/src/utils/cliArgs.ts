@@ -34,14 +34,16 @@ function hasRuntimeWrapper(preArgs: string[], execPath: string, execBase: string
     return isEntrypointPath(preArgs[1], bunMain);
 }
 
-export function normalizeCliArgs(rawArgv: string[]): string[] {
+export function normalizeCliArgs(
+    rawArgv: string[],
+    execPath: string = process.execPath,
+    bunMain: string = globalThis.Bun?.main ?? ''
+): string[] {
     if (!Array.isArray(rawArgv) || rawArgv.length === 0) {
         return [];
     }
 
-    const execPath = process.execPath;
     const execBase = basename(execPath);
-    const bunMain = globalThis.Bun?.main ?? '';
     const dashIndex = rawArgv.indexOf('--');
     let argv = rawArgv.slice();
     if (dashIndex >= 0) {
