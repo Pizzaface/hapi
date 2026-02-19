@@ -24,10 +24,12 @@
         "test:web": "cd web && bun run test",
         "clean-session": "bun run hub/scripts/cleanup-sessions.ts",
         "release-all": "cd cli && bun run release-all",
-        "rebuild": "bun scripts/rebuild.ts"
+        "rebuild": "bun scripts/rebuild.ts",
+        "ui-preview": "bun scripts/ui-preview.ts"
     },
     "devDependencies": {
         "concurrently": "^9.2.1",
+        "playwright": "^1.58.2",
         "react-devtools-core": "^7.0.1",
         "vite-plugin-pwa": "^1.2.0"
     }
