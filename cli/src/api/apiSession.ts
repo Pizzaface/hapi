@@ -518,7 +518,8 @@ export class ApiSessionClient extends EventEmitter {
     keepAlive(
         thinking: boolean,
         mode: 'local' | 'remote',
-        runtime?: { permissionMode?: SessionPermissionMode; modelMode?: SessionModelMode }
+        runtime?: { permissionMode?: SessionPermissionMode; modelMode?: SessionModelMode },
+        options?: { volatile?: boolean }
     ): void {
         this.emitSocketSafely('session-alive', {
             sid: this.sessionId,
@@ -526,7 +527,7 @@ export class ApiSessionClient extends EventEmitter {
             thinking,
             mode,
             ...(runtime ?? {})
-        }, { volatile: true })
+        }, { volatile: options?.volatile ?? true })
     }
 
     sendSessionDeath(): void {

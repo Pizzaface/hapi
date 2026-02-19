@@ -63,7 +63,7 @@ export class AgentSessionBase<Mode> {
 
     onThinkingChange = (thinking: boolean) => {
         this.thinking = thinking;
-        this.client.keepAlive(thinking, this.mode, this.getKeepAliveRuntime());
+        this.client.keepAlive(thinking, this.mode, this.getKeepAliveRuntime(), { volatile: false });
     };
 
     onModeChange = (mode: 'local' | 'remote') => {

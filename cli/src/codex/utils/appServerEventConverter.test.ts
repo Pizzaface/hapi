@@ -221,6 +221,35 @@ describe('AppServerEventConverter', () => {
         }]);
     });
 
+    it('maps codex/event/task_started to task_started', () => {
+        const converter = new AppServerEventConverter();
+
+        const events = converter.handleNotification('codex/event/task_started', {
+            msg: { type: 'task_started', turn_id: 'turn-1' }
+        });
+        expect(events).toEqual([{ type: 'task_started', turn_id: 'turn-1' }]);
+    });
+
+    it('maps codex/event/task_complete to codex_step_complete (not task_complete)', () => {
+        const converter = new AppServerEventConverter();
+
+        const events = converter.handleNotification('codex/event/task_complete', {
+            msg: { type: 'task_complete', turn_id: 'turn-1' }
+        });
+        // Should NOT produce task_complete — that would prematurely clear thinking
+        expect(events).toEqual([{ type: 'codex_step_complete' }]);
+        expect(events.find(e => e.type === 'task_complete')).toBeUndefined();
+    });
+
+    it('turn/completed still produces task_complete (authoritative turn end)', () => {
+        const converter = new AppServerEventConverter();
+
+        const events = converter.handleNotification('turn/completed', {
+            turn: { id: 'turn-1' }, status: 'Completed'
+        });
+        expect(events).toEqual([{ type: 'task_complete', turn_id: 'turn-1' }]);
+    });
+
     it('accumulates file-change output deltas', () => {
         const converter = new AppServerEventConverter();
 

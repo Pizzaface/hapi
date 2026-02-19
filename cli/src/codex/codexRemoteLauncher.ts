@@ -436,6 +436,11 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 diffProcessor.reset();
                 appServerEventConverter?.reset();
             }
+            if (msgType === 'codex_step_complete') {
+                // Intermediate step within a multi-step agentic chain.
+                // Reset diff state but keep thinking=true and turnInFlight=true.
+                diffProcessor.reset();
+            }
             if (msgType === 'agent_reasoning_section_break') {
                 reasoningProcessor.handleSectionBreak();
             }
