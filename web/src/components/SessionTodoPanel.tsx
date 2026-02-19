@@ -39,7 +39,8 @@ export function SessionTodoPanel({ todos }: { todos: TodoItem[] | undefined }) {
     const prevTodoSignatureRef = useRef(todoSignature)
 
     const activeTodos = todos?.filter(t => t.status !== 'completed') ?? []
-    const completedCount = (todos?.length ?? 0) - activeTodos.length
+    const completedTodos = todos?.filter(t => t.status === 'completed') ?? []
+    const completedCount = completedTodos.length
     const totalCount = todos?.length ?? 0
     const inProgressItem = activeTodos.find(t => t.status === 'in_progress')
 
@@ -83,7 +84,7 @@ export function SessionTodoPanel({ todos }: { todos: TodoItem[] | undefined }) {
                     )}
                 </button>
 
-                <div className={`overflow-hidden transition-all duration-200 ${isCollapsed ? 'max-h-0' : 'max-h-[40vh] overflow-y-auto'}`}>
+                <div className={`transition-all duration-200 ${isCollapsed ? 'max-h-0 overflow-hidden' : 'max-h-[40vh] overflow-y-auto'}`}>
                     <div className="flex flex-col gap-1 px-3 pb-2">
                         {activeTodos.map((todo, idx) => (
                             <div
@@ -92,6 +93,17 @@ export function SessionTodoPanel({ todos }: { todos: TodoItem[] | undefined }) {
                             >
                                 <span className="mt-px shrink-0 select-none">{'\u2610'}</span>
                                 <span className="min-w-0 leading-snug">
+                                    {todo.content?.trim() || '(empty)'}
+                                </span>
+                            </div>
+                        ))}
+                        {completedTodos.map((todo, idx) => (
+                            <div
+                                key={todo.id ?? `done-${idx}`}
+                                className="flex items-start gap-1.5 text-xs text-[var(--app-hint)] opacity-50"
+                            >
+                                <span className="mt-px shrink-0 select-none">{'\u2611'}</span>
+                                <span className="min-w-0 leading-snug line-through">
                                     {todo.content?.trim() || '(empty)'}
                                 </span>
                             </div>
