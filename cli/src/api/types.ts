@@ -96,22 +96,43 @@ export const CreateSessionResponseSchema = z.object({
 
 export type CreateSessionResponse = z.infer<typeof CreateSessionResponseSchema>
 
+const MachineRecordSchema = z.object({
+    id: z.string(),
+    seq: z.number(),
+    createdAt: z.number(),
+    updatedAt: z.number(),
+    active: z.boolean(),
+    activeAt: z.number(),
+    metadata: z.unknown().nullable(),
+    metadataVersion: z.number(),
+    runnerState: z.unknown().nullable(),
+    runnerStateVersion: z.number()
+})
+
 export const CreateMachineResponseSchema = z.object({
-    machine: z.object({
-        id: z.string(),
-        seq: z.number(),
-        createdAt: z.number(),
-        updatedAt: z.number(),
-        active: z.boolean(),
-        activeAt: z.number(),
-        metadata: z.unknown().nullable(),
-        metadataVersion: z.number(),
-        runnerState: z.unknown().nullable(),
-        runnerStateVersion: z.number()
-    })
+    machine: MachineRecordSchema
 })
 
 export type CreateMachineResponse = z.infer<typeof CreateMachineResponseSchema>
+
+export const CliMachinesResponseSchema = z.object({
+    machines: z.array(MachineRecordSchema)
+})
+
+export type CliMachinesResponse = z.infer<typeof CliMachinesResponseSchema>
+
+export const CliSpawnSessionResponseSchema = z.discriminatedUnion('type', [
+    z.object({
+        type: z.literal('success'),
+        sessionId: z.string()
+    }),
+    z.object({
+        type: z.literal('error'),
+        message: z.string()
+    })
+])
+
+export type CliSpawnSessionResponse = z.infer<typeof CliSpawnSessionResponseSchema>
 
 export const MessageMetaSchema = z.object({
     sentFrom: z.string().optional(),

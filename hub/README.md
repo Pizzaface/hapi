@@ -136,8 +136,10 @@ See `src/web/routes/` for all endpoints.
 
 - `POST /cli/sessions` - Create/load session.
 - `GET /cli/sessions/:id` - Get session by ID.
+- `GET /cli/machines` - List online machines for the token namespace.
 - `POST /cli/machines` - Create/load machine.
 - `GET /cli/machines/:id` - Get machine by ID.
+- `POST /cli/machines/:id/spawn` - Spawn a new session on a machine (CLI token auth).
 
 ## Socket.IO
 

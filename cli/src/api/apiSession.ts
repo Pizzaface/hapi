@@ -5,7 +5,7 @@ import axios from 'axios'
 import type { ZodType } from 'zod'
 import { logger } from '@/ui/logger'
 import { backoff } from '@/utils/time'
-import { apiValidationError } from '@/utils/errorUtils'
+import { apiValidationError, extractErrorInfo } from '@/utils/errorUtils'
 import { AsyncLock } from '@/utils/lock'
 import type { RawJSONLines } from '@/claude/types'
 import { configuration } from '@/configuration'
@@ -18,6 +18,8 @@ import {
 } from '@hapi/protocol'
 import type {
     AgentState,
+    CliSpawnSessionResponse,
+    Machine,
     MessageContent,
     MessageMeta,
     Metadata,
@@ -26,7 +28,16 @@ import type {
     SessionPermissionMode,
     UserMessage
 } from './types'
-import { AgentStateSchema, CliMessagesResponseSchema, MetadataSchema, UserMessageSchema } from './types'
+import {
+    AgentStateSchema,
+    CliMachinesResponseSchema,
+    CliMessagesResponseSchema,
+    CliSpawnSessionResponseSchema,
+    MachineMetadataSchema,
+    MetadataSchema,
+    RunnerStateSchema,
+    UserMessageSchema
+} from './types'
 import { RpcHandlerManager } from './rpc/RpcHandlerManager'
 import { registerCommonHandlers } from '../modules/common/registerCommonHandlers'
 import { cleanupUploadDir } from '../modules/common/handlers/uploads'
@@ -396,6 +407,112 @@ export class ApiSessionClient extends EventEmitter {
         })
 
         await this.backfillInFlight
+    }
+
+    getCurrentMachineId(): string | null {
+        const machineId = this.metadata?.machineId
+        if (typeof machineId !== 'string') {
+            return null
+        }
+        const trimmed = machineId.trim()
+        return trimmed.length > 0 ? trimmed : null
+    }
+
+    async listOnlineMachines(): Promise<Machine[]> {
+        const response = await (async () => {
+            try {
+                return await axios.get(
+                    `${configuration.apiUrl}/cli/machines`,
+                    {
+                        headers: {
+                            Authorization: `Bearer ${this.token}`,
+                            'Content-Type': 'application/json'
+                        },
+                        timeout: 30_000
+                    }
+                )
+            } catch (error) {
+                const info = extractErrorInfo(error)
+                throw new Error(info.responseErrorText || info.message)
+            }
+        })()
+
+        const parsed = CliMachinesResponseSchema.safeParse(response.data)
+        if (!parsed.success) {
+            throw apiValidationError('Invalid /cli/machines response', response)
+        }
+
+        return parsed.data.machines.map((raw) => {
+            const metadata = (() => {
+                if (raw.metadata == null) return null
+                const parsedMetadata = MachineMetadataSchema.safeParse(raw.metadata)
+                return parsedMetadata.success ? parsedMetadata.data : null
+            })()
+
+            const runnerState = (() => {
+                if (raw.runnerState == null) return null
+                const parsedRunnerState = RunnerStateSchema.safeParse(raw.runnerState)
+                return parsedRunnerState.success ? parsedRunnerState.data : null
+            })()
+
+            return {
+                id: raw.id,
+                seq: raw.seq,
+                createdAt: raw.createdAt,
+                updatedAt: raw.updatedAt,
+                active: raw.active,
+                activeAt: raw.activeAt,
+                metadata,
+                metadataVersion: raw.metadataVersion,
+                runnerState,
+                runnerStateVersion: raw.runnerStateVersion
+            }
+        })
+    }
+
+    async spawnSessionOnMachine(options: {
+        machineId: string
+        directory: string
+        agent?: 'claude' | 'codex' | 'gemini' | 'opencode'
+        model?: string
+        yolo?: boolean
+        sessionType?: 'simple' | 'worktree'
+        worktreeName?: string
+        worktreeBranch?: string
+    }): Promise<CliSpawnSessionResponse> {
+        const response = await (async () => {
+            try {
+                return await axios.post(
+                    `${configuration.apiUrl}/cli/machines/${encodeURIComponent(options.machineId)}/spawn`,
+                    {
+                        directory: options.directory,
+                        agent: options.agent,
+                        model: options.model,
+                        yolo: options.yolo,
+                        sessionType: options.sessionType,
+                        worktreeName: options.worktreeName,
+                        worktreeBranch: options.worktreeBranch
+                    },
+                    {
+                        headers: {
+                            Authorization: `Bearer ${this.token}`,
+                            'Content-Type': 'application/json'
+                        },
+                        timeout: 60_000
+                    }
+                )
+            } catch (error) {
+                const info = extractErrorInfo(error)
+                throw new Error(info.responseErrorText || info.message)
+            }
+        })()
+
+        const parsed = CliSpawnSessionResponseSchema.safeParse(response.data)
+        if (!parsed.success) {
+            throw apiValidationError('Invalid /cli/machines/:id/spawn response', response)
+        }
+
+        return parsed.data
     }
 
     sendClaudeSessionMessage(body: RawJSONLines): void {

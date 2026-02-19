@@ -20,6 +20,16 @@ const createOrLoadMachineSchema = z.object({
     runnerState: z.unknown().nullable().optional()
 })
 
+const spawnMachineSessionSchema = z.object({
+    directory: z.string().min(1),
+    agent: z.enum(['claude', 'codex', 'gemini', 'opencode']).optional(),
+    model: z.string().optional(),
+    yolo: z.boolean().optional(),
+    sessionType: z.enum(['simple', 'worktree']).optional(),
+    worktreeName: z.string().optional(),
+    worktreeBranch: z.string().optional()
+})
+
 const getMessagesQuerySchema = z.object({
     afterSeq: z.coerce.number().int().min(0),
     limit: z.coerce.number().int().min(1).max(200).optional()
@@ -172,6 +182,50 @@ export function createCliRoutes(getSyncEngine: () => SyncEngine | null): Hono<Cl
             return c.json({ error: resolved.error }, resolved.status)
         }
         return c.json({ machine: resolved.machine })
+    })
+
+    app.get('/machines', (c) => {
+        const engine = getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not ready' }, 503)
+        }
+
+        const namespace = c.get('namespace')
+        const machines = engine.getOnlineMachinesByNamespace(namespace)
+        return c.json({ machines })
+    })
+
+    app.post('/machines/:id/spawn', async (c) => {
+        const engine = getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not ready' }, 503)
+        }
+
+        const machineId = c.req.param('id')
+        const namespace = c.get('namespace')
+        const resolved = resolveMachineForNamespace(engine, machineId, namespace)
+        if (!resolved.ok) {
+            return c.json({ error: resolved.error }, resolved.status)
+        }
+
+        const json = await c.req.json().catch(() => null)
+        const parsed = spawnMachineSessionSchema.safeParse(json)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        const result = await engine.spawnSession(
+            machineId,
+            parsed.data.directory,
+            parsed.data.agent,
+            parsed.data.model,
+            parsed.data.yolo,
+            parsed.data.sessionType,
+            parsed.data.worktreeName,
+            parsed.data.worktreeBranch
+        )
+
+        return c.json(result)
     })
 
     return app

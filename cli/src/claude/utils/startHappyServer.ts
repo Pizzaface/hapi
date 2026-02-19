@@ -1,6 +1,7 @@
 /**
  * HAPI MCP server
  * Provides HAPI CLI specific tools including chat session title management
+ * and session spawning.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -11,6 +12,17 @@ import { z } from "zod";
 import { logger } from "@/ui/logger";
 import { ApiSessionClient } from "@/api/apiSession";
 import { randomUUID } from "node:crypto";
+
+type SpawnSessionInput = {
+    directory: string
+    machineId?: string
+    agent?: 'claude' | 'codex' | 'gemini' | 'opencode'
+    model?: string
+    yolo?: boolean
+    sessionType?: 'simple' | 'worktree'
+    worktreeName?: string
+    worktreeBranch?: string
+}
 
 export async function startHappyServer(client: ApiSessionClient) {
     // Handler that sends title updates via the client
@@ -30,6 +42,71 @@ export async function startHappyServer(client: ApiSessionClient) {
         }
     };
 
+    const resolveMachineId = async (requestedMachineId?: string): Promise<string> => {
+        const explicitMachineId = typeof requestedMachineId === 'string' ? requestedMachineId.trim() : ''
+        if (explicitMachineId) {
+            return explicitMachineId
+        }
+
+        const currentMachineId = client.getCurrentMachineId()
+        if (currentMachineId) {
+            return currentMachineId
+        }
+
+        const onlineMachines = await client.listOnlineMachines()
+        if (onlineMachines.length === 0) {
+            throw new Error('No online machines available in this namespace')
+        }
+        if (onlineMachines.length === 1) {
+            return onlineMachines[0].id
+        }
+
+        const machineList = onlineMachines.map((machine) => {
+            const host = machine.metadata?.displayName ?? machine.metadata?.host ?? machine.id
+            return `${machine.id} (${host})`
+        }).join(', ')
+        throw new Error(`Multiple online machines found. Please provide machineId. Available machines: ${machineList}`)
+    }
+
+    const spawnSession = async (input: SpawnSessionInput): Promise<
+        { success: true; sessionId: string; machineId: string }
+        | { success: false; error: string }
+    > => {
+        try {
+            const directory = input.directory.trim()
+            if (!directory) {
+                return { success: false, error: 'Directory is required' }
+            }
+
+            const machineId = await resolveMachineId(input.machineId)
+            const result = await client.spawnSessionOnMachine({
+                machineId,
+                directory,
+                agent: input.agent,
+                model: input.model,
+                yolo: input.yolo,
+                sessionType: input.sessionType,
+                worktreeName: input.worktreeName,
+                worktreeBranch: input.worktreeBranch
+            })
+
+            if (result.type !== 'success') {
+                return { success: false, error: result.message }
+            }
+
+            return {
+                success: true,
+                sessionId: result.sessionId,
+                machineId
+            }
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : String(error)
+            }
+        }
+    }
+
     //
     // Create the MCP server
     //
@@ -42,6 +119,18 @@ export async function startHappyServer(client: ApiSessionClient) {
     // Avoid TS instantiation depth issues by widening the schema type.
     const changeTitleInputSchema: z.ZodTypeAny = z.object({
         title: z.string().describe('The new title for the chat session'),
+    });
+
+    // Avoid TS instantiation depth issues by widening the schema type.
+    const spawnSessionInputSchema: z.ZodTypeAny = z.object({
+        directory: z.string().min(1).describe('Working directory for the new session (prefer absolute path)'),
+        machineId: z.string().optional().describe('Optional machine ID. Defaults to current session machine when available'),
+        agent: z.enum(['claude', 'codex', 'gemini', 'opencode']).optional().describe('Agent flavor for the new session'),
+        model: z.string().optional().describe('Optional model override for the spawned session'),
+        yolo: z.boolean().optional().describe('Enable aggressive auto-approval mode for the spawned session'),
+        sessionType: z.enum(['simple', 'worktree']).optional().describe('Spawn a normal session or a Git worktree session'),
+        worktreeName: z.string().optional().describe('Optional worktree name hint (worktree sessions only)'),
+        worktreeBranch: z.string().optional().describe('Optional worktree branch name (worktree sessions only)'),
     });
 
     mcp.registerTool<any, any>('change_title', {
@@ -75,6 +164,38 @@ export async function startHappyServer(client: ApiSessionClient) {
         }
     });
 
+    mcp.registerTool<any, any>('spawn_session', {
+        description: 'Spawn a new HAPI session on an online machine',
+        title: 'Spawn HAPI Session',
+        inputSchema: spawnSessionInputSchema,
+    }, async (args: SpawnSessionInput) => {
+        logger.debug('[hapiMCP] Spawning session with args:', args);
+        const response = await spawnSession(args);
+        logger.debug('[hapiMCP] spawn_session response:', response);
+
+        if (response.success) {
+            return {
+                content: [
+                    {
+                        type: 'text' as const,
+                        text: `Spawned HAPI session ${response.sessionId} on machine ${response.machineId}.`,
+                    },
+                ],
+                isError: false,
+            };
+        }
+
+        return {
+            content: [
+                {
+                    type: 'text' as const,
+                    text: `Failed to spawn HAPI session: ${response.error}`,
+                },
+            ],
+            isError: true,
+        };
+    });
+
     const transport = new StreamableHTTPServerTransport({
         // NOTE: Returning session id here will result in claude
         // sdk spawn to fail with `Invalid Request: Server already initialized`
@@ -106,7 +227,7 @@ export async function startHappyServer(client: ApiSessionClient) {
 
     return {
         url: baseUrl.toString(),
-        toolNames: ['change_title'],
+        toolNames: ['change_title', 'spawn_session'],
         stop: () => {
             logger.debug('[hapiMCP] Stopping server');
             mcp.close();

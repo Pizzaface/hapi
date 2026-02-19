@@ -1,8 +1,8 @@
 /**
  * HAPI MCP STDIO Bridge
  *
- * Minimal STDIO MCP server exposing a single tool `change_title`.
- * On invocation it forwards the tool call to an existing HAPI HTTP MCP server
+ * Minimal STDIO MCP server exposing HAPI tools.
+ * On invocation it forwards tool calls to an existing HAPI HTTP MCP server
  * using the StreamableHTTPClientTransport.
  *
  * Configure the target HTTP MCP URL via env var `HAPI_HTTP_MCP_URL` or
@@ -64,34 +64,65 @@ export async function runHappyMcpStdioBridge(argv: string[]): Promise<void> {
       version: '1.0.0',
     });
 
-    // Register the single tool and forward to HTTP MCP
+    // Register tools and forward to HTTP MCP
     const changeTitleInputSchema: z.ZodTypeAny = z.object({
       title: z.string().describe('The new title for the chat session'),
     });
 
-    server.registerTool<any, any>(
-      'change_title',
-      {
-        description: 'Change the title of the current chat session',
-        title: 'Change Chat Title',
-        inputSchema: changeTitleInputSchema,
-      },
-      async (args: Record<string, unknown>) => {
-        try {
-          const client = await ensureHttpClient();
-          const response = await client.callTool({ name: 'change_title', arguments: args });
-          // Pass-through response from HTTP server
-          return response as any;
-        } catch (error) {
-          return {
-            content: [
-              { type: 'text' as const, text: `Failed to change chat title: ${error instanceof Error ? error.message : String(error)}` },
-            ],
-            isError: true,
-          };
-        }
+    const spawnSessionInputSchema: z.ZodTypeAny = z.object({
+      directory: z.string().min(1).describe('Working directory for the new session (prefer absolute path)'),
+      machineId: z.string().optional().describe('Optional machine ID. Defaults to current session machine when available'),
+      agent: z.enum(['claude', 'codex', 'gemini', 'opencode']).optional().describe('Agent flavor for the new session'),
+      model: z.string().optional().describe('Optional model override for the spawned session'),
+      yolo: z.boolean().optional().describe('Enable aggressive auto-approval mode for the spawned session'),
+      sessionType: z.enum(['simple', 'worktree']).optional().describe('Spawn a normal session or a Git worktree session'),
+      worktreeName: z.string().optional().describe('Optional worktree name hint (worktree sessions only)'),
+      worktreeBranch: z.string().optional().describe('Optional worktree branch name (worktree sessions only)'),
+    });
+
+    const registerForwardTool = (
+      toolName: string,
+      options: {
+        description: string;
+        title: string;
+        inputSchema: z.ZodTypeAny;
       }
-    );
+    ): void => {
+      server.registerTool<any, any>(
+        toolName,
+        options,
+        async (args: Record<string, unknown>) => {
+          try {
+            const client = await ensureHttpClient();
+            const response = await client.callTool({ name: toolName, arguments: args });
+            // Pass-through response from HTTP server
+            return response as any;
+          } catch (error) {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `Failed to run ${toolName}: ${error instanceof Error ? error.message : String(error)}`
+                },
+              ],
+              isError: true,
+            };
+          }
+        }
+      );
+    };
+
+    registerForwardTool('change_title', {
+      description: 'Change the title of the current chat session',
+      title: 'Change Chat Title',
+      inputSchema: changeTitleInputSchema,
+    });
+
+    registerForwardTool('spawn_session', {
+      description: 'Spawn a new HAPI session on an online machine',
+      title: 'Spawn HAPI Session',
+      inputSchema: spawnSessionInputSchema,
+    });
 
     // Start STDIO transport
     const stdio = new StdioServerTransport();

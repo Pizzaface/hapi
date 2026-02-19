@@ -9,6 +9,7 @@ import { Store } from '../store'
 import { SyncEngine } from '../sync/syncEngine'
 import { createAuthMiddleware, type WebAppEnv } from './middleware/auth'
 import { createAuthRoutes } from './routes/auth'
+import { createCliRoutes } from './routes/cli'
 import { createGitRoutes } from './routes/git'
 import { createMachinesRoutes } from './routes/machines'
 import { createSessionsRoutes } from './routes/sessions'
@@ -108,6 +109,7 @@ function createTestContext(): TestContext {
     const engine = new SyncEngine(store, io as never, rpcRegistry as never, sseStub as never)
 
     const app = new Hono<WebAppEnv>()
+    app.route('/cli', createCliRoutes(() => engine))
     app.route('/api', createAuthRoutes(JWT_SECRET, store))
     app.use('/api/*', createAuthMiddleware(JWT_SECRET))
     app.route('/api', createSessionsRoutes(() => engine))
@@ -148,6 +150,19 @@ function authHeaders(token: string): Record<string, string> {
 }
 
 function authJsonHeaders(token: string): Record<string, string> {
+    return {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json'
+    }
+}
+
+function cliHeaders(token: string): Record<string, string> {
+    return {
+        authorization: `Bearer ${token}`
+    }
+}
+
+function cliJsonHeaders(token: string): Record<string, string> {
     return {
         authorization: `Bearer ${token}`,
         'content-type': 'application/json'
@@ -500,6 +515,99 @@ describe('web integration routes', () => {
         }
     })
 
+    it('/cli/machines and /cli/machines/:id/spawn are namespace-scoped', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const alphaMachine = ctx.engine.getOrCreateMachine(
+                'alpha-machine',
+                { host: 'alpha-host', platform: 'linux', happyCliVersion: '1.0.0' },
+                { status: 'running' },
+                'alpha'
+            )
+            const betaMachine = ctx.engine.getOrCreateMachine(
+                'beta-machine',
+                { host: 'beta-host', platform: 'linux', happyCliVersion: '1.0.0' },
+                { status: 'running' },
+                'beta'
+            )
+            ctx.engine.handleMachineAlive({ machineId: alphaMachine.id, time: Date.now() })
+            ctx.engine.handleMachineAlive({ machineId: betaMachine.id, time: Date.now() })
+
+            const alphaCliToken = `${CLI_TOKEN}:alpha`
+            const listResponse = await ctx.app.request('/cli/machines', {
+                headers: cliHeaders(alphaCliToken)
+            })
+            expect(listResponse.status).toBe(200)
+            expect(await listResponse.json()).toEqual({
+                machines: [
+                    expect.objectContaining({ id: alphaMachine.id })
+                ]
+            })
+
+            ctx.registerRpc(`${alphaMachine.id}:spawn-happy-session`, (params: unknown) => {
+                const payload = params as { directory: string; agent?: string; sessionType?: string }
+                expect(payload.directory).toBe('/tmp/agent-subtask')
+                expect(payload.agent).toBe('codex')
+                expect(payload.sessionType).toBe('simple')
+                return { type: 'success', sessionId: 'spawned-alpha-session' }
+            })
+
+            const spawnResponse = await ctx.app.request(`/cli/machines/${alphaMachine.id}/spawn`, {
+                method: 'POST',
+                headers: cliJsonHeaders(alphaCliToken),
+                body: JSON.stringify({
+                    directory: '/tmp/agent-subtask',
+                    agent: 'codex',
+                    sessionType: 'simple'
+                })
+            })
+            expect(spawnResponse.status).toBe(200)
+            expect(await spawnResponse.json()).toEqual({
+                type: 'success',
+                sessionId: 'spawned-alpha-session'
+            })
+
+            const forbiddenResponse = await ctx.app.request(`/cli/machines/${betaMachine.id}/spawn`, {
+                method: 'POST',
+                headers: cliJsonHeaders(alphaCliToken),
+                body: JSON.stringify({
+                    directory: '/tmp/blocked'
+                })
+            })
+            expect(forbiddenResponse.status).toBe(403)
+            expect(await forbiddenResponse.json()).toEqual({ error: 'Machine access denied' })
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('/cli/machines/:id/spawn validates request body', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const machine = ctx.engine.getOrCreateMachine(
+                'machine-1',
+                { host: 'host-a', platform: 'linux', happyCliVersion: '1.0.0' },
+                { status: 'running' },
+                'alpha'
+            )
+            ctx.engine.handleMachineAlive({ machineId: machine.id, time: Date.now() })
+
+            const alphaCliToken = `${CLI_TOKEN}:alpha`
+            const response = await ctx.app.request(`/cli/machines/${machine.id}/spawn`, {
+                method: 'POST',
+                headers: cliJsonHeaders(alphaCliToken),
+                body: JSON.stringify({ directory: '' })
+            })
+
+            expect(response.status).toBe(400)
+            expect(await response.json()).toEqual({ error: 'Invalid body' })
+        } finally {
+            ctx.stop()
+        }
+    })
+
     it('gets session beads and enforces access checks', async () => {
         const ctx = createTestContext()
 
@@ -603,5 +711,4 @@ describe('web integration routes', () => {
             ctx.stop()
         }
     })
-
 })
