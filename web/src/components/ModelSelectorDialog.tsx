@@ -16,17 +16,24 @@ export function ModelSelectorDialog(props: {
         <Dialog open={props.open} onOpenChange={props.onOpenChange}>
             <DialogContent>
                 <DialogHeader>
-                    <DialogTitle>Select Model</DialogTitle>
+                    <DialogTitle id="model-selector-title">Select Model</DialogTitle>
                     <DialogDescription>
                         Choose the model for this session. Currently using {MODEL_MODE_LABELS[props.currentMode]}.
                     </DialogDescription>
                 </DialogHeader>
 
-                <div className="mt-3 flex flex-col gap-1">
+                <div
+                    className="mt-3 flex flex-col gap-1"
+                    role="radiogroup"
+                    aria-labelledby="model-selector-title"
+                >
                     {MODEL_MODES.map((mode) => (
                         <button
                             key={mode}
                             type="button"
+                            role="radio"
+                            aria-checked={props.currentMode === mode}
+                            data-state={props.currentMode === mode ? 'checked' : 'unchecked'}
                             className={`flex items-center gap-3 rounded-lg px-3 py-3 text-left text-sm transition-colors ${
                                 props.currentMode === mode
                                     ? 'bg-[var(--app-link)]/10 text-[var(--app-link)]'
