@@ -1,0 +1,24 @@
+name: PR Checks
+
+on:
+    pull_request:
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: oven-sh/setup-bun@v2
+            - run: bun install
+            - name: Build web app
+              env:
+                  VITE_REQUIRE_HUB_URL: '1'
+              run: bun run --cwd web build
+
+    dependency-review:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/dependency-review-action@v4
+              with:
+                  fail-on-severity: high
