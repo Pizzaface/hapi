@@ -26,6 +26,10 @@ const machineGitBranchesSchema = z.object({
     limit: z.number().int().min(1).max(500).optional()
 })
 
+const machineAgentsSchema = z.object({
+    directory: z.string().trim().min(1)
+})
+
 function mapSpawnBodyValidationError(error: z.ZodError): string {
     const hasOversizedPrompt = error.issues.some((issue) => (
         issue.path.length === 1
@@ -142,6 +146,32 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null): Ho
             return c.json({ branches })
         } catch (error) {
             return c.json({ error: error instanceof Error ? error.message : 'Failed to list branches' }, 500)
+        }
+    })
+
+    app.post('/machines/:id/agents', async (c) => {
+        const engine = getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not connected' }, 503)
+        }
+
+        const machineId = c.req.param('id')
+        const machine = requireMachine(c, engine, machineId)
+        if (machine instanceof Response) {
+            return machine
+        }
+
+        const body = await c.req.json().catch(() => null)
+        const parsed = machineAgentsSchema.safeParse(body)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        try {
+            const agents = await engine.listMachineAgents(machineId, parsed.data.directory)
+            return c.json({ agents })
+        } catch (error) {
+            return c.json({ error: error instanceof Error ? error.message : 'Failed to list agents' }, 500)
         }
     })
 

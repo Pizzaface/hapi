@@ -78,6 +78,12 @@ export type MessagesResponse = {
 export type MachinesResponse = { machines: Machine[] }
 export type MachinePathsExistsResponse = { exists: Record<string, boolean> }
 export type MachineGitBranchesResponse = { branches: string[] }
+export type MachineAgent = {
+    name: string
+    description?: string
+    source: 'global' | 'project'
+}
+export type MachineAgentsResponse = { agents: MachineAgent[] }
 
 export type SpawnResponse =
     | { type: 'success'; sessionId: string; initialPromptDelivery?: 'delivered' | 'timed_out' }

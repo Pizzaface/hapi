@@ -7,6 +7,7 @@ import type {
     FileReadResponse,
     FileSearchResponse,
     GitCommandResponse,
+    MachineAgentsResponse,
     MachineGitBranchesResponse,
     MachinePathsExistsResponse,
     MachinesResponse,
@@ -435,6 +436,19 @@ export class ApiClient {
         )
     }
 
+    async listMachineAgents(
+        machineId: string,
+        directory: string
+    ): Promise<MachineAgentsResponse> {
+        return await this.request<MachineAgentsResponse>(
+            `/api/machines/${encodeURIComponent(machineId)}/agents`,
+            {
+                method: 'POST',
+                body: JSON.stringify({ directory })
+            }
+        )
+    }
+
     async spawnSession(
         machineId: string,
         directory: string,
@@ -443,11 +457,12 @@ export class ApiClient {
         yolo?: boolean,
         sessionType?: 'simple' | 'worktree',
         worktreeName?: string,
-        worktreeBranch?: string
+        worktreeBranch?: string,
+        initialPrompt?: string
     ): Promise<SpawnResponse> {
         return await this.request<SpawnResponse>(`/api/machines/${encodeURIComponent(machineId)}/spawn`, {
             method: 'POST',
-            body: JSON.stringify({ directory, agent, model, yolo, sessionType, worktreeName, worktreeBranch })
+            body: JSON.stringify({ directory, agent, model, yolo, sessionType, worktreeName, worktreeBranch, initialPrompt })
         })
     }
 

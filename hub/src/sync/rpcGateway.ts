@@ -70,6 +70,16 @@ export type RpcGitBranchesResponse = {
     branches: string[]
 }
 
+export type RpcDiscoveredAgent = {
+    name: string
+    description?: string
+    source: 'global' | 'project'
+}
+
+export type RpcListAgentsResponse = {
+    agents: RpcDiscoveredAgent[]
+}
+
 export class RpcGateway {
     constructor(
         private readonly io: Server,
@@ -198,6 +208,51 @@ export class RpcGateway {
             .filter((value): value is string => typeof value === 'string')
             .map((value) => value.trim())
             .filter(Boolean)
+    }
+
+    async listAgents(machineId: string, directory: string): Promise<RpcDiscoveredAgent[]> {
+        const result = await this.machineRpc(machineId, 'list-agents', { directory }) as RpcListAgentsResponse | unknown
+
+        if (!result || typeof result !== 'object') {
+            throw new Error('Unexpected list-agents result')
+        }
+
+        const rawAgents = (result as RpcListAgentsResponse).agents
+        if (!Array.isArray(rawAgents)) {
+            throw new Error('Unexpected list-agents result')
+        }
+
+        const agents: RpcDiscoveredAgent[] = []
+        for (const rawAgent of rawAgents) {
+            if (!rawAgent || typeof rawAgent !== 'object') {
+                continue
+            }
+
+            const name = typeof (rawAgent as { name?: unknown }).name === 'string'
+                ? (rawAgent as { name: string }).name.trim()
+                : ''
+            if (!name) {
+                continue
+            }
+
+            const source = (rawAgent as { source?: unknown }).source
+            if (source !== 'global' && source !== 'project') {
+                continue
+            }
+
+            const descriptionValue = (rawAgent as { description?: unknown }).description
+            const description = typeof descriptionValue === 'string'
+                ? descriptionValue.trim()
+                : undefined
+
+            agents.push({
+                name,
+                description: description || undefined,
+                source
+            })
+        }
+
+        return agents.sort((left, right) => left.name.localeCompare(right.name))
     }
 
     async getGitStatus(sessionId: string, cwd?: string): Promise<RpcCommandResponse> {

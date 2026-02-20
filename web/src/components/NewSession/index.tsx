@@ -3,6 +3,7 @@ import type { ApiClient } from '@/api/client'
 import type { Machine } from '@/types/api'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useSpawnSession } from '@/hooks/mutations/useSpawnSession'
+import { useAgents } from '@/hooks/queries/useAgents'
 import { useSessions } from '@/hooks/queries/useSessions'
 import { useActiveSuggestions, type Suggestion } from '@/hooks/useActiveSuggestions'
 import { useDirectorySuggestions } from '@/hooks/useDirectorySuggestions'
@@ -14,6 +15,7 @@ import { AgentSelector } from './AgentSelector'
 import { DirectorySection } from './DirectorySection'
 import { MachineSelector } from './MachineSelector'
 import { ModelSelector } from './ModelSelector'
+import { PersonaSelector } from './PersonaSelector'
 import {
     loadPreferredAgent,
     loadPreferredYoloMode,
@@ -45,6 +47,7 @@ export function NewSession(props: {
     const [isDirectoryFocused, setIsDirectoryFocused] = useState(false)
     const [pathExistence, setPathExistence] = useState<Record<string, boolean>>({})
     const [agent, setAgent] = useState<AgentType>(loadPreferredAgent)
+    const [persona, setPersona] = useState<string | null>(null)
     const [model, setModel] = useState('auto')
     const [yoloMode, setYoloMode] = useState(loadPreferredYoloMode)
     const [supportsWorktree, setSupportsWorktree] = useState(false)
@@ -265,6 +268,17 @@ export function NewSession(props: {
         { allowEmptyQuery: true, autoSelectFirst: false }
     )
 
+    const { agents } = useAgents(
+        props.api,
+        machineId,
+        directory,
+        agent === 'claude'
+    )
+
+    useEffect(() => {
+        setPersona(null)
+    }, [machineId, directory, agent])
+
     const handleDirectoryKeyDown = useCallback((event: ReactKeyboardEvent<HTMLInputElement>) => {
         if (suggestions.length === 0) return
 
@@ -348,12 +362,16 @@ export function NewSession(props: {
                 worktreeName,
                 worktreeBranch
             )
+            const initialPrompt = agent === 'claude' && persona
+                ? `/agents ${persona}`
+                : undefined
             const result = await spawnSession({
                 machineId,
                 directory: directory.trim(),
                 agent,
                 model: resolvedModel,
                 yolo: yoloMode,
+                initialPrompt,
                 ...worktreeSpawnParams
             })
 
@@ -462,6 +480,13 @@ export function NewSession(props: {
                 agent={agent}
                 isDisabled={isFormDisabled}
                 onAgentChange={setAgent}
+            />
+            <PersonaSelector
+                agent={agent}
+                personas={agents}
+                persona={persona}
+                isDisabled={isFormDisabled}
+                onPersonaChange={setPersona}
             />
             <ModelSelector
                 agent={agent}

@@ -499,6 +499,14 @@ export class SyncEngine {
         return await this.rpcGateway.checkPathsExist(machineId, paths)
     }
 
+    async listMachineAgents(machineId: string, directory: string): Promise<Array<{
+        name: string
+        description?: string
+        source: 'global' | 'project'
+    }>> {
+        return await this.rpcGateway.listAgents(machineId, directory)
+    }
+
     async getMachineGitBranches(machineId: string, directory: string, limit?: number): Promise<string[]> {
         return await this.rpcGateway.getGitBranches(machineId, directory, limit)
     }

@@ -474,6 +474,73 @@ describe('web integration routes', () => {
         }
     })
 
+    it('lists machine agents via RPC and enforces namespace scope', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const alphaToken = await getAccessToken(ctx.app, 'alpha')
+            const betaToken = await getAccessToken(ctx.app, 'beta')
+
+            const alphaMachine = ctx.engine.getOrCreateMachine(
+                'machine-alpha',
+                { host: 'host-alpha', platform: 'linux', happyCliVersion: '1.0.0' },
+                { status: 'running' },
+                'alpha'
+            )
+            const betaMachine = ctx.engine.getOrCreateMachine(
+                'machine-beta',
+                { host: 'host-beta', platform: 'linux', happyCliVersion: '1.0.0' },
+                { status: 'running' },
+                'beta'
+            )
+            ctx.engine.handleMachineAlive({ machineId: alphaMachine.id, time: Date.now() })
+            ctx.engine.handleMachineAlive({ machineId: betaMachine.id, time: Date.now() })
+
+            let seenDirectory = ''
+            ctx.registerRpc(`${alphaMachine.id}:list-agents`, (params: unknown) => {
+                seenDirectory = (params as { directory: string }).directory
+                return {
+                    agents: [
+                        { name: 'ops', description: 'Ops persona', source: 'global' },
+                        { name: 'bead-architect', description: 'Bead workflows', source: 'project' }
+                    ]
+                }
+            })
+
+            const successResponse = await ctx.app.request(`/api/machines/${alphaMachine.id}/agents`, {
+                method: 'POST',
+                headers: authJsonHeaders(alphaToken),
+                body: JSON.stringify({ directory: ' /tmp/repo ' })
+            })
+            expect(successResponse.status).toBe(200)
+            expect(seenDirectory).toBe('/tmp/repo')
+            expect(await successResponse.json()).toEqual({
+                agents: [
+                    { name: 'bead-architect', description: 'Bead workflows', source: 'project' },
+                    { name: 'ops', description: 'Ops persona', source: 'global' }
+                ]
+            })
+
+            const invalidResponse = await ctx.app.request(`/api/machines/${alphaMachine.id}/agents`, {
+                method: 'POST',
+                headers: authJsonHeaders(alphaToken),
+                body: JSON.stringify({ directory: '   ' })
+            })
+            expect(invalidResponse.status).toBe(400)
+            expect(await invalidResponse.json()).toEqual({ error: 'Invalid body' })
+
+            const forbiddenResponse = await ctx.app.request(`/api/machines/${alphaMachine.id}/agents`, {
+                method: 'POST',
+                headers: authJsonHeaders(betaToken),
+                body: JSON.stringify({ directory: '/tmp/repo' })
+            })
+            expect(forbiddenResponse.status).toBe(403)
+            expect(await forbiddenResponse.json()).toEqual({ error: 'Machine access denied' })
+        } finally {
+            ctx.stop()
+        }
+    })
+
     it('validates git file path inputs and wraps rpc failures', async () => {
         const ctx = createTestContext()
 
