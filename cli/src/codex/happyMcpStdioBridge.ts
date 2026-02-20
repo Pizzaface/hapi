@@ -74,7 +74,7 @@ export async function runHappyMcpStdioBridge(argv: string[]): Promise<void> {
       machineId: z.string().optional().describe('Optional machine ID. Defaults to current session machine when available'),
       agent: z.enum(['claude', 'codex', 'gemini', 'opencode']).optional().describe('Agent type for the new session: claude (default), codex (OpenAI Codex), gemini (Google Gemini), or opencode. Match to the user\'s requested agent.'),
       model: z.string().optional().describe('Optional model override for the spawned session'),
-      yolo: z.boolean().optional().describe('Enable aggressive auto-approval mode for the spawned session'),
+      yolo: z.preprocess(v => v === 'true' ? true : v === 'false' ? false : v, z.boolean()).optional().describe('Enable aggressive auto-approval mode for the spawned session'),
       sessionType: z.enum(['simple', 'worktree']).optional().describe('Spawn a normal session or a Git worktree session'),
       worktreeName: z.string().optional().describe('Optional worktree name hint (worktree sessions only)'),
       worktreeBranch: z.string().optional().describe('Optional worktree branch name (worktree sessions only)'),
