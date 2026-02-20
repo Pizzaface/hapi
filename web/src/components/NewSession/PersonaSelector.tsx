@@ -15,13 +15,13 @@ export function PersonaSelector(props: {
     const options = useMemo(() => {
         return [
             {
-                key: 'none',
+                key: 'persona:none',
                 value: null,
                 label: t('newSession.persona.none'),
                 description: t('newSession.persona.none.desc')
             },
             ...props.personas.map((persona) => ({
-                key: persona.name,
+                key: `persona:${persona.name}`,
                 value: persona.name,
                 label: persona.name,
                 description: persona.description
