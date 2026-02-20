@@ -2,14 +2,17 @@ import { describe, it, expect } from 'vitest'
 import { z } from 'zod'
 
 /**
- * The spawn_session MCP schema uses z.preprocess to coerce string booleans
- * from XML-based tool calls (where all values arrive as strings) into actual
- * booleans. This test validates that pattern handles all input variants.
+ * The spawn_session MCP schema uses z.union with z.literal().transform()
+ * to coerce string booleans from XML-based tool calls into actual booleans.
+ * Unlike z.preprocess, this approach produces JSON Schema that accepts both
+ * boolean and string types, so the MCP SDK's JSON Schema validation passes
+ * before Zod parsing runs.
  */
-const yoloSchema = z.preprocess(
-    v => v === 'true' ? true : v === 'false' ? false : v,
-    z.boolean()
-).optional()
+const yoloSchema = z.union([
+    z.boolean(),
+    z.literal('true').transform(() => true),
+    z.literal('false').transform(() => false)
+]).optional()
 
 describe('spawn_session yolo parameter coercion', () => {
     it('accepts boolean true', () => {
