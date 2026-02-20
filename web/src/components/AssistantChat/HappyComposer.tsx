@@ -22,6 +22,7 @@ import { usePlatform } from '@/hooks/usePlatform'
 import { usePWAInstall } from '@/hooks/usePWAInstall'
 import { isCodexFamilyFlavor } from '@/lib/agentFlavorUtils'
 import { markSkillUsed } from '@/lib/recent-skills'
+import { getDraft, setDraft, clearDraft } from '@/lib/draft-store'
 import { FloatingOverlay } from '@/components/ChatInput/FloatingOverlay'
 import { Autocomplete } from '@/components/ChatInput/Autocomplete'
 import { StatusBar } from '@/components/AssistantChat/StatusBar'
@@ -45,6 +46,7 @@ const RUNTIME_MODEL_PRESETS: Record<string, string[]> = {
 const EFFORT_PRESETS = ['low', 'medium', 'high'] as const
 
 export function HappyComposer(props: {
+    sessionId?: string
     disabled?: boolean
     permissionMode?: PermissionMode
     modelMode?: ModelMode
@@ -74,6 +76,7 @@ export function HappyComposer(props: {
 }) {
     const { t } = useTranslation()
     const {
+        sessionId: draftSessionId,
         disabled = false,
         permissionMode: rawPermissionMode,
         modelMode: rawModelMode,
@@ -156,6 +159,20 @@ export function HappyComposer(props: {
 
     const textareaRef = useRef<HTMLTextAreaElement>(null)
     const prevControlledByUser = useRef(controlledByUser)
+    const composerTextRef = useRef(composerText)
+    composerTextRef.current = composerText
+
+    // Restore draft on mount, save on unmount
+    useEffect(() => {
+        if (!draftSessionId) return
+        const saved = getDraft(draftSessionId)
+        if (saved) {
+            api.composer().setText(saved)
+        }
+        return () => {
+            setDraft(draftSessionId, composerTextRef.current)
+        }
+    }, [draftSessionId]) // eslint-disable-line react-hooks/exhaustive-deps -- intentionally mount/unmount only
 
     useEffect(() => {
         setInputState((prev) => {
@@ -405,8 +422,11 @@ export function HappyComposer(props: {
             event.preventDefault()
             return
         }
+        if (draftSessionId) {
+            clearDraft(draftSessionId)
+        }
         setShowContinueHint(false)
-    }, [attachmentsReady])
+    }, [attachmentsReady, draftSessionId])
 
     const handlePermissionChange = useCallback((mode: PermissionMode) => {
         if (!onPermissionModeChange || controlsDisabled) return

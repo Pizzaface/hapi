@@ -66,32 +66,31 @@ export function PendingPromptsBanner(props: {
     const primaryName = getSessionTitle(primarySession)
 
     return (
-        <div className="fixed top-0 left-0 right-0 z-40 animate-slide-down pt-[env(safe-area-inset-top)]">
-            <div className="border-b border-[var(--app-divider)] bg-amber-50/90 px-3 py-2 shadow-sm dark:bg-amber-500/10">
-                <div className="mx-auto flex w-full max-w-content items-center justify-between gap-3">
-                    <div className="min-w-0 flex-1 text-xs text-amber-900 dark:text-amber-100">
-                        <div className="truncate">
-                            {t('pendingPrompts.message', {
-                                n: summary.totalPrompts,
-                                m: summary.sessionsWithPending.length,
-                                name: primaryName
-                            })}
-                        </div>
-                    </div>
-                    <button
-                        type="button"
-                        className="inline-flex min-h-[44px] shrink-0 items-center rounded bg-amber-500 px-3 text-xs font-medium text-white hover:bg-amber-600"
-                        onClick={() => {
-                            navigate({
-                                to: '/sessions/$sessionId',
-                                params: { sessionId: primarySession.id }
-                            })
-                        }}
-                    >
-                        {t('pendingPrompts.open')}
-                    </button>
-                </div>
-            </div>
+        <div className="fixed inset-x-0 top-[calc(env(safe-area-inset-top)+5.5rem)] z-40 flex justify-center px-3 pointer-events-none">
+            <button
+                type="button"
+                className="pointer-events-auto inline-flex w-full max-w-md items-center gap-2.5 rounded-xl border border-amber-300/50 bg-amber-50/95 px-4 py-2.5 text-xs font-medium text-amber-900 shadow-lg backdrop-blur-sm transition-colors hover:bg-amber-100 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-100 dark:hover:bg-amber-500/25"
+                onClick={() => {
+                    navigate({
+                        to: '/sessions/$sessionId',
+                        params: { sessionId: primarySession.id }
+                    })
+                }}
+            >
+                <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[10px] font-bold text-white">
+                    {summary.totalPrompts}
+                </span>
+                <span className="min-w-0 flex-1 truncate">
+                    {t('pendingPrompts.message', {
+                        n: summary.totalPrompts,
+                        m: summary.sessionsWithPending.length,
+                        name: primaryName
+                    })}
+                </span>
+                <span className="shrink-0 text-xs text-amber-600 dark:text-amber-300">
+                    {t('pendingPrompts.open')}
+                </span>
+            </button>
         </div>
     )
 }

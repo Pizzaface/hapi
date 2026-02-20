@@ -65,7 +65,7 @@ describe('PendingPromptsBanner component', () => {
         cleanup()
     })
 
-    it('renders when pending prompts exist', () => {
+    it('renders as a clickable chip when pending prompts exist', () => {
         mockSessions([
             makeSession({
                 id: 'session-1',
@@ -84,12 +84,25 @@ describe('PendingPromptsBanner component', () => {
         render(<PendingPromptsBanner api={null} />)
 
         const message = screen.getByText('pending:3:2:Session One')
-        const openButton = screen.getByRole('button', { name: 'Open' })
-
         expect(message).toBeInTheDocument()
         expect(message).toHaveClass('truncate')
-        expect(openButton).toBeInTheDocument()
-        expect(openButton.className).toContain('min-h-[44px]')
+
+        const chip = screen.getByRole('button')
+        expect(chip.className).toContain('rounded-xl')
+    })
+
+    it('shows the total pending count in a badge', () => {
+        mockSessions([
+            makeSession({
+                id: 'session-1',
+                pendingRequestsCount: 5,
+                metadata: { path: '/repo', name: 'Session One' }
+            })
+        ])
+
+        render(<PendingPromptsBanner api={null} />)
+
+        expect(screen.getByText('5')).toBeInTheDocument()
     })
 
     it('does not render when no pending prompts exist', () => {
@@ -103,7 +116,7 @@ describe('PendingPromptsBanner component', () => {
         expect(container.firstChild).toBeNull()
     })
 
-    it('navigates to the primary pending session when open is clicked', () => {
+    it('navigates to the primary pending session when clicked', () => {
         mockSessions([
             makeSession({
                 id: 'target-session',
@@ -114,7 +127,7 @@ describe('PendingPromptsBanner component', () => {
 
         render(<PendingPromptsBanner api={null} />)
 
-        fireEvent.click(screen.getByRole('button', { name: 'Open' }))
+        fireEvent.click(screen.getByRole('button'))
 
         expect(navigateMock).toHaveBeenCalledWith({
             to: '/sessions/$sessionId',
@@ -122,7 +135,7 @@ describe('PendingPromptsBanner component', () => {
         })
     })
 
-    it('uses fixed overlay classes with lower z-index than system banners', () => {
+    it('positions as a fixed top toast below the header with z-40', () => {
         mockSessions([
             makeSession({
                 id: 'session-1',
@@ -132,24 +145,10 @@ describe('PendingPromptsBanner component', () => {
         ])
 
         const { container } = render(<PendingPromptsBanner api={null} />)
-        const banner = container.firstElementChild
+        const wrapper = container.firstElementChild
 
-        expect(banner).toHaveClass('fixed', 'top-0', 'left-0', 'right-0', 'z-40')
-        expect(banner?.className).toContain('pt-[env(safe-area-inset-top)]')
-    })
-
-    it('applies slide-down animation class on mount', () => {
-        mockSessions([
-            makeSession({
-                id: 'session-1',
-                pendingRequestsCount: 1,
-                metadata: { path: '/repo', name: 'Session One' }
-            })
-        ])
-
-        const { container } = render(<PendingPromptsBanner api={null} />)
-        const banner = container.firstElementChild
-
-        expect(banner).toHaveClass('animate-slide-down')
+        expect(wrapper).toHaveClass('fixed', 'z-40')
+        expect(wrapper).toHaveClass('pointer-events-none')
+        expect(wrapper?.className).toContain('top-[')
     })
 })
