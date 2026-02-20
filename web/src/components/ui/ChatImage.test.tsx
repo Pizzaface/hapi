@@ -32,7 +32,7 @@ describe('ChatImage', () => {
         const image = getInlineImage(container)
         fireEvent.load(image)
 
-        fireEvent.click(screen.getByRole('button', { name: 'View full size image' }))
+        fireEvent.click(screen.getByRole('button', { name: 'View full size image: Preview image' }))
 
         const dialog = await screen.findByRole('dialog')
         const modalImage = within(dialog).getByRole('img', { name: 'Preview image' })
@@ -49,7 +49,7 @@ describe('ChatImage', () => {
         const image = getInlineImage(container)
         fireEvent.load(image)
 
-        fireEvent.click(screen.getByRole('button', { name: 'View full size image' }))
+        fireEvent.click(screen.getByRole('button', { name: 'View full size image: Zoomable image' }))
 
         const dialog = await screen.findByRole('dialog')
         fireEvent.click(within(dialog).getByRole('button', { name: 'Close image preview' }))
@@ -71,12 +71,12 @@ describe('ChatImage', () => {
         fireEvent.error(image)
 
         expect(screen.getByText('Image failed to load')).toBeInTheDocument()
-        expect(screen.getByRole('button', { name: 'View full size image' })).toBeDisabled()
+        expect(screen.getByRole('button', { name: 'View full size image: Broken image' })).toBeDisabled()
     })
 
     it('uses subtle background and keyboard-focusable trigger button', () => {
         render(<ChatImage src="https://example.com/image.png" alt="Focusable image" />)
-        const button = screen.getByRole('button', { name: 'View full size image' })
+        const button = screen.getByRole('button', { name: 'View full size image: Focusable image' })
 
         expect(button.className).toContain('bg-[var(--app-subtle-bg)]')
         button.focus()

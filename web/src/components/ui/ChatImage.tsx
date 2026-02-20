@@ -37,7 +37,7 @@ export function ChatImage(props: ChatImageProps) {
                         suppressFocusRing && 'focus-visible:ring-0',
                         hasError && 'cursor-not-allowed'
                     )}
-                    aria-label="View full size image"
+                    aria-label={alt ? `View full size image: ${alt}` : 'View full size image'}
                     onPointerDown={onTriggerPointerDown}
                     onKeyDown={onTriggerKeyDown}
                     onBlur={onTriggerBlur}
