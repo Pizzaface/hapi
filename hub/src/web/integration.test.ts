@@ -368,6 +368,96 @@ describe('web integration routes', () => {
         }
     })
 
+    it('POST /api/sessions/:id/exit deletes active sessions even when kill fails', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const namespace = 'alpha'
+            const token = await getAccessToken(ctx.app, namespace)
+
+            const activeSession = ctx.engine.getOrCreateSession(
+                'exit-active',
+                { path: '/repo', host: 'host-a' },
+                null,
+                namespace
+            )
+            ctx.engine.handleSessionAlive({ sid: activeSession.id, time: Date.now() })
+
+            let killAttempts = 0
+            const killHandler = async () => {
+                killAttempts += 1
+                throw new Error('process already exited')
+            }
+            ctx.registerRpc(`${activeSession.id}:killSession`, killHandler)
+
+            const response = await ctx.app.request(`/api/sessions/${activeSession.id}/exit`, {
+                method: 'POST',
+                headers: authHeaders(token)
+            })
+
+            expect(response.status).toBe(200)
+            expect(await response.json()).toEqual({ ok: true })
+            expect(killAttempts).toBe(1)
+            expect(ctx.engine.getSession(activeSession.id)).toBeUndefined()
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('POST /api/sessions/:id/exit attempts kill and deletes inactive sessions', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const namespace = 'alpha'
+            const token = await getAccessToken(ctx.app, namespace)
+
+            const inactiveSession = ctx.engine.getOrCreateSession(
+                'exit-inactive',
+                { path: '/repo', host: 'host-a' },
+                null,
+                namespace
+            )
+
+            let killAttempts = 0
+            const killHandler = async () => {
+                killAttempts += 1
+                return { ok: true }
+            }
+            ctx.registerRpc(`${inactiveSession.id}:killSession`, killHandler)
+
+            const response = await ctx.app.request(`/api/sessions/${inactiveSession.id}/exit`, {
+                method: 'POST',
+                headers: authHeaders(token)
+            })
+
+            expect(response.status).toBe(200)
+            expect(await response.json()).toEqual({ ok: true })
+            expect(killAttempts).toBe(1)
+            expect(ctx.engine.getSession(inactiveSession.id)).toBeUndefined()
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('POST /api/sessions/:id/exit is idempotent for missing sessions', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const namespace = 'alpha'
+            const token = await getAccessToken(ctx.app, namespace)
+
+            const response = await ctx.app.request('/api/sessions/does-not-exist/exit', {
+                method: 'POST',
+                headers: authHeaders(token)
+            })
+
+            expect(response.status).toBe(200)
+            expect(await response.json()).toEqual({ ok: true })
+        } finally {
+            ctx.stop()
+        }
+    })
+
     it('returns resume errors for missing path and no online machine', async () => {
         const ctx = createTestContext()
 

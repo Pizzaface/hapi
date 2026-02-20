@@ -56,6 +56,8 @@ export type SpawnSessionResult =
     | { type: 'success'; sessionId: string; initialPromptDelivery?: 'delivered' | 'timed_out' }
     | { type: 'error'; message: string }
 
+const EXIT_KILL_TIMEOUT_MS = 1_500
+
 export class SyncEngine {
     private readonly eventPublisher: EventPublisher
     private readonly sessionCache: SessionCache
@@ -312,6 +314,39 @@ export class SyncEngine {
 
     async deleteSession(sessionId: string): Promise<void> {
         await this.sessionCache.deleteSession(sessionId)
+    }
+
+    async exitSession(sessionId: string): Promise<void> {
+        const killAttempt = this.rpcGateway.killSession(sessionId).catch(() => {})
+        const killTimeout = new Promise<void>((resolve) => {
+            setTimeout(resolve, EXIT_KILL_TIMEOUT_MS)
+        })
+        await Promise.race([killAttempt, killTimeout])
+
+        try {
+            await this.sessionCache.deleteSession(sessionId)
+            return
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            if (message.includes('not found')) {
+                return
+            }
+            if (!message.includes('active')) {
+                throw error
+            }
+        }
+
+        this.handleSessionEnd({ sid: sessionId, time: Date.now() })
+
+        try {
+            await this.sessionCache.deleteSession(sessionId)
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            if (message.includes('not found')) {
+                return
+            }
+            throw error
+        }
     }
 
     async applySessionConfig(

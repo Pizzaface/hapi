@@ -253,6 +253,12 @@ function AppInner() {
             url: event.data.url
         })
     }, [addToast])
+    const handleActiveSessionRemoved = useCallback(async (_sessionId: string) => {
+        await router.navigate({
+            to: '/sessions',
+            replace: true
+        })
+    }, [router])
 
     const eventSubscription = useMemo(
         () => ({ all: true }),
@@ -264,6 +270,8 @@ function AppInner() {
         token: token ?? '',
         baseUrl,
         subscription: eventSubscription,
+        activeSessionId: selectedSessionId,
+        onActiveSessionRemoved: handleActiveSessionRemoved,
         onConnect: handleSseConnect,
         onDisconnect: handleSseDisconnect,
         onEvent: handleSseEvent,

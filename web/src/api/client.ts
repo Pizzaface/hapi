@@ -498,6 +498,13 @@ export class ApiClient {
         })
     }
 
+    async exitSession(sessionId: string): Promise<void> {
+        await this.request(`/api/sessions/${encodeURIComponent(sessionId)}/exit`, {
+            method: 'POST',
+            body: JSON.stringify({})
+        })
+    }
+
     async transcribeVoiceAudio(audio: Blob, language?: string): Promise<{
         ok: boolean
         text?: string

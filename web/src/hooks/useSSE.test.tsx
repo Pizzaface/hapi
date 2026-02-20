@@ -113,4 +113,41 @@ describe('useSSE beads invalidation', () => {
             })
         })
     })
+
+    it('calls onActiveSessionRemoved when the active session is removed', async () => {
+        vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+
+        const client = new QueryClient({
+            defaultOptions: {
+                queries: { retry: false }
+            }
+        })
+        const onActiveSessionRemoved = vi.fn()
+
+        renderHook(() => useSSE({
+            enabled: true,
+            token: 'token',
+            baseUrl: 'http://localhost:3000',
+            subscription: { all: true },
+            activeSessionId: 'session-1',
+            onActiveSessionRemoved,
+            onEvent: () => {
+            }
+        }), {
+            wrapper: createWrapper(client)
+        })
+
+        const source = FakeEventSource.instances[0]
+        if (!source) {
+            throw new Error('Expected EventSource instance')
+        }
+
+        source.emit({ type: 'session-removed', sessionId: 'session-2' })
+        source.emit({ type: 'session-removed', sessionId: 'session-1' })
+
+        await waitFor(() => {
+            expect(onActiveSessionRemoved).toHaveBeenCalledTimes(1)
+        })
+        expect(onActiveSessionRemoved).toHaveBeenCalledWith('session-1')
+    })
 })

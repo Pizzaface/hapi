@@ -24,7 +24,9 @@ import { SessionBeadPanel } from '@/components/SessionBeadPanel'
 import { ModelSelectorDialog } from '@/components/ModelSelectorDialog'
 import { DevMessageStream } from '@/components/DevMessageStream'
 import { isClaudeFlavor } from '@/lib/agentFlavorUtils'
+import { useToast } from '@/lib/toast-context'
 import { MODEL_MODES } from '@hapi/protocol'
+import { isExitSlashCommand } from './sessionExitCommand'
 
 export function SessionChat(props: {
     api: ApiClient
@@ -51,6 +53,7 @@ export function SessionChat(props: {
 }) {
     const { haptic } = usePlatform()
     const navigate = useNavigate()
+    const { addToast } = useToast()
     const sessionInactive = !props.session.active
     const normalizedCacheRef = useRef<Map<string, { source: DecryptedMessage; normalized: NormalizedMessage | null }>>(new Map())
     const blocksByIdRef = useRef<Map<string, ChatBlock>>(new Map())
@@ -59,7 +62,7 @@ export function SessionChat(props: {
     const [showModelSelector, setShowModelSelector] = useState(false)
     const [devViewOpen, setDevViewOpen] = useState(false)
     const agentFlavor = props.session.metadata?.flavor ?? null
-    const { abortSession, switchSession, setPermissionMode, setModelMode } = useSessionActions(
+    const { abortSession, switchSession, setPermissionMode, setModelMode, exitSession } = useSessionActions(
         props.api,
         props.session.id,
         agentFlavor
@@ -258,6 +261,22 @@ export function SessionChat(props: {
         props.onRefresh()
     }, [switchSession, props.onRefresh])
 
+    const handleExitSession = useCallback(() => {
+        void exitSession({
+            onDeleted: () => {
+                props.onBack()
+            },
+            onError: (error) => {
+                addToast({
+                    title: 'Failed to exit session',
+                    body: error.message,
+                    sessionId: props.session.id,
+                    url: ''
+                })
+            }
+        })
+    }, [addToast, exitSession, props.onBack, props.session.id])
+
     const handleViewFiles = useCallback(() => {
         navigate({
             to: '/sessions/$sessionId/files',
@@ -274,6 +293,11 @@ export function SessionChat(props: {
 
     const handleSend = useCallback((text: string, attachments?: AttachmentMetadata[]) => {
         const trimmed = text.trim()
+
+        if (isExitSlashCommand(trimmed)) {
+            handleExitSession()
+            return
+        }
 
         // Intercept /mcp to show native MCP info dialog alongside Claude's response
         if (trimmed === '/mcp' || trimmed.startsWith('/mcp ')) {
@@ -293,7 +317,7 @@ export function SessionChat(props: {
 
         props.onSend(text, attachments)
         setForceScrollToken((token) => token + 1)
-    }, [props.onSend, agentFlavor, handleModelModeChange])
+    }, [props.onSend, agentFlavor, handleExitSession, handleModelModeChange])
 
     const attachmentAdapter = useMemo(() => {
         if (!props.session.active) {

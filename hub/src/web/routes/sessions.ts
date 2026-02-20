@@ -476,6 +476,29 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
     })
 
+    app.post('/sessions/:id/exit', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) {
+            return engine
+        }
+
+        const sessionId = c.req.param('id')
+        const namespace = c.get('namespace')
+        const access = engine.resolveSessionAccess(sessionId, namespace)
+
+        if (!access.ok && access.reason === 'access-denied') {
+            return c.json({ error: 'Session access denied' }, 403)
+        }
+
+        try {
+            await engine.exitSession(sessionId)
+            return c.json({ ok: true })
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to exit session'
+            return c.json({ error: message }, 500)
+        }
+    })
+
     app.get('/sessions/:id/slash-commands', async (c) => {
         const engine = requireSyncEngine(c, getSyncEngine)
         if (engine instanceof Response) {

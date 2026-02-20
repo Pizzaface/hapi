@@ -32,6 +32,7 @@ const BUILTIN_COMMANDS: Record<string, SlashCommand[]> = {
         { name: 'context', description: 'Visualize current context usage as a colored grid', source: 'builtin' },
         { name: 'cost', description: 'Show the total cost and duration of the current session', source: 'builtin' },
         { name: 'doctor', description: 'Diagnose and verify your Claude Code installation and settings', source: 'builtin' },
+        { name: 'exit', description: 'Delete this session', source: 'builtin' },
         { name: 'new', description: 'Start a new chat during a conversation', source: 'builtin' },
         { name: 'plan', description: 'View or open the current session plan', source: 'builtin' },
         { name: 'stats', description: 'Show your Claude Code usage statistics and activity', source: 'builtin' },
@@ -40,6 +41,7 @@ const BUILTIN_COMMANDS: Record<string, SlashCommand[]> = {
     codex: [
         { name: 'clear', description: 'Clear conversation history and free up context', source: 'builtin' },
         { name: 'review', description: 'Review current changes and find issues', source: 'builtin' },
+        { name: 'exit', description: 'Delete this session', source: 'builtin' },
         { name: 'new', description: 'Start a new chat during a conversation', source: 'builtin' },
         { name: 'compat', description: 'Summarize conversation to prevent hitting the context limit', source: 'builtin' },
         { name: 'undo', description: 'Ask Codex to undo a turn', source: 'builtin' },
@@ -50,10 +52,12 @@ const BUILTIN_COMMANDS: Record<string, SlashCommand[]> = {
         { name: 'about', description: 'Show version info', source: 'builtin' },
         { name: 'clear', description: 'Clear the screen and conversation history', source: 'builtin' },
         { name: 'compress', description: 'Compress the context by replacing it with a summary', source: 'builtin' },
+        { name: 'exit', description: 'Delete this session', source: 'builtin' },
         { name: 'new', description: 'Start a new chat during a conversation', source: 'builtin' },
         { name: 'stats', description: 'Check session stats', source: 'builtin' },
     ],
     opencode: [
+        { name: 'exit', description: 'Delete this session', source: 'builtin' },
         { name: 'new', description: 'Start a new chat during a conversation', source: 'builtin' },
     ],
 }
