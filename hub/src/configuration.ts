@@ -193,6 +193,11 @@ export function getConfiguration(): Configuration {
     return _configuration
 }
 
+/** Reset singleton for test isolation. Production code must never call this. */
+export function _resetConfigurationForTesting(): void {
+    _configuration = null
+}
+
 // For compatibility - throws on access if not configured
 export const configuration = new Proxy({} as Configuration, {
     get(_, prop) {

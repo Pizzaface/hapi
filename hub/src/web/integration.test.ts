@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Hono } from 'hono'
 
-import { createConfiguration } from '../configuration'
+import { createConfiguration, _resetConfigurationForTesting } from '../configuration'
 import { Store } from '../store'
 import { SyncEngine } from '../sync/syncEngine'
 import { createAuthMiddleware, type WebAppEnv } from './middleware/auth'
@@ -175,10 +175,12 @@ beforeAll(async () => {
     tempConfigDir = mkdtempSync(join(tmpdir(), 'hapi-web-integration-'))
     process.env.HAPI_HOME = tempConfigDir
     process.env.CLI_API_TOKEN = CLI_TOKEN
+    _resetConfigurationForTesting()
     await createConfiguration()
 })
 
 afterAll(() => {
+    _resetConfigurationForTesting()
     if (tempConfigDir) {
         rmSync(tempConfigDir, { recursive: true, force: true })
     }
