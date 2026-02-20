@@ -480,6 +480,7 @@ export class ApiSessionClient extends EventEmitter {
         sessionType?: 'simple' | 'worktree'
         worktreeName?: string
         worktreeBranch?: string
+        initialPrompt?: string
     }): Promise<CliSpawnSessionResponse> {
         const response = await (async () => {
             try {
@@ -492,7 +493,8 @@ export class ApiSessionClient extends EventEmitter {
                         yolo: options.yolo,
                         sessionType: options.sessionType,
                         worktreeName: options.worktreeName,
-                        worktreeBranch: options.worktreeBranch
+                        worktreeBranch: options.worktreeBranch,
+                        initialPrompt: options.initialPrompt
                     },
                     {
                         headers: {

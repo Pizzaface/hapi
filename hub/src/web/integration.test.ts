@@ -545,13 +545,24 @@ describe('web integration routes', () => {
                 ]
             })
 
+            const activeSpawnTarget = ctx.engine.getOrCreateSession(
+                'spawned-alpha-target',
+                { path: '/tmp/agent-subtask', host: 'alpha-host', machineId: alphaMachine.id },
+                null,
+                'alpha'
+            )
+            ctx.engine.handleSessionAlive({ sid: activeSpawnTarget.id, time: Date.now() })
+
             ctx.registerRpc(`${alphaMachine.id}:spawn-happy-session`, (params: unknown) => {
-                const payload = params as { directory: string; agent?: string; sessionType?: string }
+                const payload = params as { directory: string; agent?: string; sessionType?: string; initialPrompt?: string }
                 expect(payload.directory).toBe('/tmp/agent-subtask')
                 expect(payload.agent).toBe('codex')
                 expect(payload.sessionType).toBe('simple')
-                return { type: 'success', sessionId: 'spawned-alpha-session' }
+                expect(payload.initialPrompt).toBeUndefined()
+                return { type: 'success', sessionId: activeSpawnTarget.id }
             })
+
+            const initialPrompt = 'Investigate flaky upload test and report findings.'
 
             const spawnResponse = await ctx.app.request(`/cli/machines/${alphaMachine.id}/spawn`, {
                 method: 'POST',
@@ -559,13 +570,28 @@ describe('web integration routes', () => {
                 body: JSON.stringify({
                     directory: '/tmp/agent-subtask',
                     agent: 'codex',
-                    sessionType: 'simple'
+                    sessionType: 'simple',
+                    initialPrompt
                 })
             })
             expect(spawnResponse.status).toBe(200)
             expect(await spawnResponse.json()).toEqual({
                 type: 'success',
-                sessionId: 'spawned-alpha-session'
+                sessionId: activeSpawnTarget.id,
+                initialPromptDelivery: 'delivered'
+            })
+
+            const spawnedMessages = ctx.store.messages.getMessages(activeSpawnTarget.id, 20)
+            expect(spawnedMessages).toHaveLength(1)
+            expect(spawnedMessages[0]?.content).toMatchObject({
+                role: 'user',
+                content: {
+                    type: 'text',
+                    text: initialPrompt
+                },
+                meta: {
+                    sentFrom: 'spawn'
+                }
             })
 
             const forbiddenResponse = await ctx.app.request(`/cli/machines/${betaMachine.id}/spawn`, {
@@ -603,6 +629,55 @@ describe('web integration routes', () => {
 
             expect(response.status).toBe(400)
             expect(await response.json()).toEqual({ error: 'Invalid body' })
+
+            const oversizedPrompt = 'x'.repeat(100_001)
+            const oversizedResponse = await ctx.app.request(`/cli/machines/${machine.id}/spawn`, {
+                method: 'POST',
+                headers: cliJsonHeaders(alphaCliToken),
+                body: JSON.stringify({
+                    directory: '/tmp/repo',
+                    initialPrompt: oversizedPrompt
+                })
+            })
+
+            expect(oversizedResponse.status).toBe(400)
+            expect(await oversizedResponse.json()).toEqual({
+                error: 'Invalid body: initialPrompt must be at most 100000 characters'
+            })
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('/api/machines/:id/spawn validates oversized initialPrompt with descriptive error', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const namespace = 'alpha'
+            const token = await getAccessToken(ctx.app, namespace)
+
+            const machine = ctx.engine.getOrCreateMachine(
+                'machine-2',
+                { host: 'host-a', platform: 'linux', happyCliVersion: '1.0.0' },
+                { status: 'running' },
+                namespace
+            )
+            ctx.engine.handleMachineAlive({ machineId: machine.id, time: Date.now() })
+
+            const oversizedPrompt = 'x'.repeat(100_001)
+            const response = await ctx.app.request(`/api/machines/${machine.id}/spawn`, {
+                method: 'POST',
+                headers: authJsonHeaders(token),
+                body: JSON.stringify({
+                    directory: '/tmp/repo',
+                    initialPrompt: oversizedPrompt
+                })
+            })
+
+            expect(response.status).toBe(400)
+            expect(await response.json()).toEqual({
+                error: 'Invalid body: initialPrompt must be at most 100000 characters'
+            })
         } finally {
             ctx.stop()
         }

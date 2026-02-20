@@ -22,6 +22,7 @@ type SpawnSessionInput = {
     sessionType?: 'simple' | 'worktree'
     worktreeName?: string
     worktreeBranch?: string
+    initialPrompt?: string
 }
 
 export async function startHappyServer(client: ApiSessionClient) {
@@ -69,7 +70,7 @@ export async function startHappyServer(client: ApiSessionClient) {
     }
 
     const spawnSession = async (input: SpawnSessionInput): Promise<
-        { success: true; sessionId: string; machineId: string }
+        { success: true; sessionId: string; machineId: string; initialPromptDelivery?: 'delivered' | 'timed_out' }
         | { success: false; error: string }
     > => {
         try {
@@ -87,7 +88,8 @@ export async function startHappyServer(client: ApiSessionClient) {
                 yolo: input.yolo,
                 sessionType: input.sessionType,
                 worktreeName: input.worktreeName,
-                worktreeBranch: input.worktreeBranch
+                worktreeBranch: input.worktreeBranch,
+                initialPrompt: input.initialPrompt
             })
 
             if (result.type !== 'success') {
@@ -97,7 +99,8 @@ export async function startHappyServer(client: ApiSessionClient) {
             return {
                 success: true,
                 sessionId: result.sessionId,
-                machineId
+                machineId,
+                initialPromptDelivery: result.initialPromptDelivery
             }
         } catch (error) {
             return {
@@ -131,6 +134,7 @@ export async function startHappyServer(client: ApiSessionClient) {
         sessionType: z.enum(['simple', 'worktree']).optional().describe('Spawn a normal session or a Git worktree session'),
         worktreeName: z.string().optional().describe('Optional worktree name hint (worktree sessions only)'),
         worktreeBranch: z.string().optional().describe('Optional worktree branch name (worktree sessions only)'),
+        initialPrompt: z.string().max(100_000).optional().describe('Optional initial prompt/task to send after spawn (max 100000 chars)'),
     });
 
     mcp.registerTool<any, any>('change_title', {
@@ -174,11 +178,16 @@ export async function startHappyServer(client: ApiSessionClient) {
         logger.debug('[hapiMCP] spawn_session response:', response);
 
         if (response.success) {
+            const promptStatusText = args.initialPrompt && args.initialPrompt.trim()
+                ? response.initialPromptDelivery === 'timed_out'
+                    ? ' Initial prompt delivery timed out; session may not have started yet.'
+                    : ' Initial prompt delivered.'
+                : ''
             return {
                 content: [
                     {
                         type: 'text' as const,
-                        text: `Spawned HAPI session ${response.sessionId} on machine ${response.machineId}.`,
+                        text: `Spawned HAPI session ${response.sessionId} on machine ${response.machineId}.${promptStatusText}`,
                     },
                 ],
                 isError: false,
