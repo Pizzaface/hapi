@@ -120,7 +120,7 @@ describe('group + flat ordering', () => {
     it('sorts Other group last', () => {
         const sessions: SessionSummary[] = [
             makeSession({ id: 'z1', sortOrder: 'a', metadata: { path: '/zoo' } }),
-            makeSession({ id: 'o1', sortOrder: 'b', metadata: {} }),
+            makeSession({ id: 'o1', sortOrder: 'b', metadata: null }),
             makeSession({ id: 'a1', sortOrder: 'c', metadata: { path: '/alpha' } }),
         ]
 
