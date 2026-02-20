@@ -331,6 +331,7 @@ export class PermissionHandler extends BasePermissionHandler<PermissionResponse,
      */
     handleToolCall = async (toolName: string, input: unknown, mode: EnhancedMode, options: { signal: AbortSignal }): Promise<PermissionResult> => {
         const isQuestionTool = isQuestionToolName(toolName);
+        const currentMode = this.session.getPermissionMode() ?? this.permissionMode;
 
         // Check if tool is explicitly allowed
         if (!isQuestionTool && toolName === 'Bash') {
@@ -358,11 +359,11 @@ export class PermissionHandler extends BasePermissionHandler<PermissionResponse,
         // Handle special cases
         //
 
-        if (!isQuestionTool && this.permissionMode === 'bypassPermissions') {
+        if (!isQuestionTool && currentMode === 'bypassPermissions') {
             return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
         }
 
-        if (!isQuestionTool && this.permissionMode === 'acceptEdits' && descriptor.edit) {
+        if (!isQuestionTool && currentMode === 'acceptEdits' && descriptor.edit) {
             return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
         }
 
