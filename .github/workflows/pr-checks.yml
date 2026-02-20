@@ -4,6 +4,63 @@ on:
     pull_request:
 
 jobs:
+    ui-screenshot-policy:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Enforce screenshot evidence for UI PRs
+              uses: actions/github-script@v7
+              with:
+                  script: |
+                      const pr = context.payload.pull_request;
+                      if (!pr) {
+                          core.info('Not a pull_request event; skipping.');
+                          return;
+                      }
+
+                      const files = await github.paginate(github.rest.pulls.listFiles, {
+                          owner: context.repo.owner,
+                          repo: context.repo.repo,
+                          pull_number: pr.number,
+                          per_page: 100
+                      });
+
+                      const uiFilePatterns = [
+                          /^web\/src\//,
+                          /^web\/public\//,
+                          /^web\/index\.html$/,
+                          /^web\/tailwind\.config\.[jt]s$/,
+                          /^web\/postcss\.config\.[cm]?js$/,
+                          /^web\/.*\.(css|scss|sass|less)$/
+                      ];
+
+                      const uiFiles = files
+                          .map((file) => file.filename)
+                          .filter((filename) => uiFilePatterns.some((pattern) => pattern.test(filename)));
+
+                      if (uiFiles.length === 0) {
+                          core.info('No UI-related files changed; screenshot check not required.');
+                          return;
+                      }
+
+                      const body = pr.body ?? '';
+                      const hasImageMarkdown = /!\[[^\]]*]\([^)]+\)/.test(body);
+                      const hasHtmlImage = /<img\s+[^>]*src=/i.test(body);
+                      const hasImageLink = /(user-attachments\/assets\/|https?:\/\/\S+\.(png|jpe?g|gif|webp))/i.test(body);
+                      const hasNoUiOverride = /-\s*\[[xX]\]\s*no visual\/ui changes/i.test(body)
+                          || /-\s*\[[xX]\]\s*no ui changes/i.test(body);
+
+                      if (hasImageMarkdown || hasHtmlImage || hasImageLink || hasNoUiOverride) {
+                          core.info('Screenshot policy check passed.');
+                          return;
+                      }
+
+                      const examples = uiFiles.slice(0, 8).map((filename) => `- ${filename}`).join('\n');
+                      core.setFailed(
+                          `UI-related files changed but PR body has no screenshot evidence.\n\n` +
+                          `Changed UI files (sample):\n${examples}\n\n` +
+                          `Add screenshot(s) to the PR body, or check "No visual/UI changes" in the PR template if changes are non-visual.`
+                      );
+
     build:
         runs-on: ubuntu-latest
         steps:
