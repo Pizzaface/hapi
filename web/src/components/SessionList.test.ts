@@ -79,7 +79,7 @@ describe('sortSessionsBySortOrder', () => {
 })
 
 describe('group + flat ordering', () => {
-    it('orders groups by min sortOrder and sessions within group by sortOrder', () => {
+    it('orders groups alphabetically by directory, sessions within group by sortOrder', () => {
         const sessions: SessionSummary[] = [
             makeSession({ id: 'a2', sortOrder: 'c', metadata: { path: '/repo-a' } }),
             makeSession({ id: 'a1', sortOrder: 'b', metadata: { path: '/repo-a' } }),
@@ -88,8 +88,8 @@ describe('group + flat ordering', () => {
 
         const groups = groupSessionsByDirectory(sessions, {})
 
-        expect(groups.map(group => group.directory)).toEqual(['/repo-b', '/repo-a'])
-        expect(groups[1]?.sessions.map(session => session.id)).toEqual(['a1', 'a2'])
+        expect(groups.map(group => group.directory)).toEqual(['/repo-a', '/repo-b'])
+        expect(groups[0]?.sessions.map(session => session.id)).toEqual(['a1', 'a2'])
     })
 
     it('flat view reorders globally by sortOrder', () => {
@@ -106,7 +106,7 @@ describe('group + flat ordering', () => {
         expect(groups[0]?.sessions.map(session => session.id)).toEqual(['repo-a', 'repo-b', 'repo-c'])
     })
 
-    it('orders groups by lexicographic min sortOrder (base62-safe)', () => {
+    it('orders groups alphabetically regardless of session sortOrder', () => {
         const sessions: SessionSummary[] = [
             makeSession({ id: 'lower', sortOrder: 'a', metadata: { path: '/repo-lower' } }),
             makeSession({ id: 'upper', sortOrder: 'Z', metadata: { path: '/repo-upper' } }),
@@ -114,7 +114,19 @@ describe('group + flat ordering', () => {
 
         const groups = groupSessionsByDirectory(sessions, {})
 
-        expect(groups.map(group => group.directory)).toEqual(['/repo-upper', '/repo-lower'])
+        expect(groups.map(group => group.directory)).toEqual(['/repo-lower', '/repo-upper'])
+    })
+
+    it('sorts Other group last', () => {
+        const sessions: SessionSummary[] = [
+            makeSession({ id: 'z1', sortOrder: 'a', metadata: { path: '/zoo' } }),
+            makeSession({ id: 'o1', sortOrder: 'b', metadata: {} }),
+            makeSession({ id: 'a1', sortOrder: 'c', metadata: { path: '/alpha' } }),
+        ]
+
+        const groups = groupSessionsByDirectory(sessions, {})
+
+        expect(groups.map(group => group.directory)).toEqual(['/alpha', '/zoo', 'Other'])
     })
 })
 

@@ -158,7 +158,7 @@ describe('SessionList ordering + DnD UI', () => {
         expect(view.container.querySelectorAll('[data-group-header]')).toHaveLength(0)
     })
 
-    it('grouped mode orders groups by min sortOrder and sessions by sortOrder', () => {
+    it('grouped mode orders groups alphabetically, sessions within group by sortOrder', () => {
         const sessions = [
             makeSession({ id: 'g1-b', sortOrder: 'd', metadata: { path: '/group-one' }, active: true }),
             makeSession({ id: 'g1-a', sortOrder: 'c', metadata: { path: '/group-one' } }),
@@ -173,8 +173,8 @@ describe('SessionList ordering + DnD UI', () => {
         const groupHeaders = Array.from(view.container.querySelectorAll<HTMLElement>('[data-group-header]'))
             .map(el => el.dataset.groupHeader)
 
-        expect(groupHeaders).toEqual(['/group-two', '/group-one'])
-        expect(getRenderedSessionOrder(view.container)).toEqual(['g2-a', 'g1-a', 'g1-b'])
+        expect(groupHeaders).toEqual(['/group-one', '/group-two'])
+        expect(getRenderedSessionOrder(view.container)).toEqual(['g1-a', 'g1-b', 'g2-a'])
     })
 
     it('renders always-visible drag handles with aria labels + instructions', () => {

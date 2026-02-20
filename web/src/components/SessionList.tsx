@@ -222,16 +222,14 @@ export function groupSessionsByDirectory(
             }
         })
         .sort((a, b) => {
-            if (a.minSortOrder === null && b.minSortOrder !== null) return 1
-            if (a.minSortOrder !== null && b.minSortOrder === null) return -1
-            if (a.minSortOrder !== null && b.minSortOrder !== null && a.minSortOrder !== b.minSortOrder) {
-                return a.minSortOrder < b.minSortOrder ? -1 : 1
-            }
+            const aIsOther = a.directory === 'Other'
+            const bIsOther = b.directory === 'Other'
+            if (aIsOther !== bIsOther) return aIsOther ? 1 : -1
 
-            const machineCompare = (a.machineId ?? '').localeCompare(b.machineId ?? '')
-            if (machineCompare !== 0) return machineCompare
+            const dirCompare = a.directory.localeCompare(b.directory)
+            if (dirCompare !== 0) return dirCompare
 
-            return a.directory.localeCompare(b.directory)
+            return (a.machineId ?? '').localeCompare(b.machineId ?? '')
         })
 }
 
