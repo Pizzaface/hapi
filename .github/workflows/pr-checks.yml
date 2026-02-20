@@ -43,7 +43,7 @@ jobs:
                           return;
                       }
 
-                      const body = pr.body ?? '';
+                      const body = (pr.body ?? '').replace(/<!--[\s\S]*?-->/g, '');
                       const hasImageMarkdown = /!\[[^\]]*]\([^)]+\)/.test(body);
                       const hasHtmlImage = /<img\s+[^>]*src=/i.test(body);
                       const hasImageLink = /(user-attachments\/assets\/|https?:\/\/\S+\.(png|jpe?g|gif|webp))/i.test(body);
