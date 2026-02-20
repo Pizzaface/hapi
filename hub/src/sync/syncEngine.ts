@@ -306,6 +306,10 @@ export class SyncEngine {
         await this.sessionCache.renameSession(sessionId, name)
     }
 
+    async updateSessionSortOrder(sessionId: string, sortOrder: string): Promise<void> {
+        await this.sessionCache.updateSessionSortOrder(sessionId, sortOrder)
+    }
+
     async deleteSession(sessionId: string): Promise<void> {
         await this.sessionCache.deleteSession(sessionId)
     }

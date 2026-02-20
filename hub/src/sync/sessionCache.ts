@@ -122,6 +122,7 @@ export class SessionCache {
             metadataVersion: stored.metadataVersion,
             agentState,
             agentStateVersion: stored.agentStateVersion,
+            sortOrder: stored.sortOrder,
             thinking: existing?.thinking ?? false,
             thinkingAt: existing?.thinkingAt ?? 0,
             todos,
@@ -267,6 +268,20 @@ export class SessionCache {
         this.refreshSession(sessionId)
     }
 
+    async updateSessionSortOrder(sessionId: string, sortOrder: string): Promise<void> {
+        const session = this.sessions.get(sessionId)
+        if (!session) {
+            throw new Error('Session not found')
+        }
+
+        const updated = this.store.sessions.updateSessionSortOrder(sessionId, sortOrder, session.namespace)
+        if (!updated) {
+            throw new Error('Failed to update session sort order')
+        }
+
+        this.refreshSession(sessionId)
+    }
+
     async deleteSession(sessionId: string): Promise<void> {
         const session = this.sessions.get(sessionId)
         if (!session) {
@@ -329,6 +344,17 @@ export class SessionCache {
                 oldStored.todosUpdatedAt,
                 namespace
             )
+        }
+
+        if (oldStored.sortOrder !== newStored.sortOrder) {
+            const sortOrderUpdated = this.store.sessions.updateSessionSortOrder(
+                newSessionId,
+                oldStored.sortOrder,
+                namespace
+            )
+            if (!sortOrderUpdated) {
+                throw new Error('Failed to preserve session sort order during merge')
+            }
         }
 
         this.store.sessionBeads.reassignSession(oldSessionId, newSessionId)

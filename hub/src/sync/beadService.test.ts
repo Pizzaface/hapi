@@ -31,6 +31,7 @@ function makeSession(id: string, options: {
         metadataVersion: 1,
         agentState: null,
         agentStateVersion: 1,
+        sortOrder: 'a0',
         thinking: false,
         thinkingAt: 0
     }

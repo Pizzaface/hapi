@@ -62,6 +62,7 @@ export class ApiClient {
             updatedAt: raw.updatedAt,
             active: raw.active,
             activeAt: raw.activeAt,
+            sortOrder: raw.sortOrder,
             metadata,
             metadataVersion: raw.metadataVersion,
             agentState,

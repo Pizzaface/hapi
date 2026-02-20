@@ -1,4 +1,5 @@
 import { Database } from 'bun:sqlite'
+import { generateKeyBetween } from 'fractional-indexing'
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from 'node:fs'
 import { dirname } from 'node:path'
 
@@ -27,7 +28,7 @@ export { SessionStore } from './sessionStore'
 export { SessionBeadStore } from './sessionBeadStore'
 export { UserStore } from './userStore'
 
-const SCHEMA_VERSION: number = 5
+const SCHEMA_VERSION: number = 6
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -136,6 +137,12 @@ export class Store {
             this.setUserVersion(version)
         }
 
+        if (version < 6) {
+            this.migrateFromV5ToV6()
+            version = 6
+            this.setUserVersion(version)
+        }
+
         if (version !== SCHEMA_VERSION) {
             throw this.buildSchemaMismatchError(version)
         }
@@ -160,10 +167,12 @@ export class Store {
                 todos_updated_at INTEGER,
                 active INTEGER DEFAULT 0,
                 active_at INTEGER,
-                seq INTEGER DEFAULT 0
+                seq INTEGER DEFAULT 0,
+                sort_order TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_sessions_tag ON sessions(tag);
             CREATE INDEX IF NOT EXISTS idx_sessions_tag_namespace ON sessions(tag, namespace);
+            CREATE INDEX IF NOT EXISTS idx_sessions_namespace_sort_order ON sessions(namespace, sort_order, id);
 
             CREATE TABLE IF NOT EXISTS machines (
                 id TEXT PRIMARY KEY,
@@ -362,8 +371,48 @@ export class Store {
         `)
     }
 
+    private migrateFromV5ToV6(): void {
+        const sessionColumns = this.getSessionColumnNames()
+
+        try {
+            this.db.exec('BEGIN')
+
+            if (!sessionColumns.has('sort_order')) {
+                this.db.exec('ALTER TABLE sessions ADD COLUMN sort_order TEXT')
+            }
+
+            this.db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_namespace_sort_order ON sessions(namespace, sort_order, id)')
+
+            const sessionRows = this.db.prepare(
+                `SELECT id
+                 FROM sessions
+                 ORDER BY updated_at DESC, id ASC`
+            ).all() as Array<{ id: string }>
+
+            const updateSortOrder = this.db.prepare('UPDATE sessions SET sort_order = ? WHERE id = ?')
+            let previousSortOrder: string | null = null
+
+            for (const row of sessionRows) {
+                const nextSortOrder = generateKeyBetween(previousSortOrder, null)
+                updateSortOrder.run(nextSortOrder, row.id)
+                previousSortOrder = nextSortOrder
+            }
+
+            this.db.exec('COMMIT')
+        } catch (error) {
+            this.db.exec('ROLLBACK')
+            const message = error instanceof Error ? error.message : String(error)
+            throw new Error(`SQLite schema migration v5->v6 failed: ${message}`)
+        }
+    }
+
     private getMachineColumnNames(): Set<string> {
         const rows = this.db.prepare('PRAGMA table_info(machines)').all() as Array<{ name: string }>
+        return new Set(rows.map((row) => row.name))
+    }
+
+    private getSessionColumnNames(): Set<string> {
+        const rows = this.db.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>
         return new Set(rows.map((row) => row.name))
     }
 

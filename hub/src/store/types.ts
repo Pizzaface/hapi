@@ -14,6 +14,7 @@ export type StoredSession = {
     active: boolean
     activeAt: number | null
     seq: number
+    sortOrder: string | null
 }
 
 export type StoredMachine = {

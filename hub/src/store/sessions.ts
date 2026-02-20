@@ -1,5 +1,6 @@
 import type { Database } from 'bun:sqlite'
 import { randomUUID } from 'node:crypto'
+import { generateKeyBetween } from 'fractional-indexing'
 
 import type { StoredSession, VersionedUpdateResult } from './types'
 import { safeJsonParse } from './json'
@@ -21,6 +22,7 @@ type DbSessionRow = {
     active: number
     active_at: number | null
     seq: number
+    sort_order: string | null
 }
 
 function toStoredSession(row: DbSessionRow): StoredSession {
@@ -39,7 +41,8 @@ function toStoredSession(row: DbSessionRow): StoredSession {
         todosUpdatedAt: row.todos_updated_at,
         active: row.active === 1,
         activeAt: row.active_at,
-        seq: row.seq
+        seq: row.seq,
+        sortOrder: row.sort_order
     }
 }
 
@@ -60,6 +63,16 @@ export function getOrCreateSession(
 
     const now = Date.now()
     const id = randomUUID()
+    const minSortOrderRow = db.prepare(
+        `SELECT sort_order
+         FROM sessions
+         WHERE namespace = ?
+           AND sort_order IS NOT NULL
+         ORDER BY sort_order ASC
+         LIMIT 1`
+    ).get(namespace) as { sort_order: string | null } | undefined
+    const minSortOrder = minSortOrderRow?.sort_order ?? null
+    const sortOrder = generateKeyBetween(null, minSortOrder)
 
     const metadataJson = JSON.stringify(metadata)
     const agentStateJson = agentState === null || agentState === undefined ? null : JSON.stringify(agentState)
@@ -70,13 +83,15 @@ export function getOrCreateSession(
             metadata, metadata_version,
             agent_state, agent_state_version,
             todos, todos_updated_at,
-            active, active_at, seq
+            active, active_at, seq,
+            sort_order
         ) VALUES (
             @id, @tag, @namespace, NULL, @created_at, @updated_at,
             @metadata, 1,
             @agent_state, 1,
             NULL, NULL,
-            0, NULL, 0
+            0, NULL, 0,
+            @sort_order
         )
     `).run({
         id,
@@ -85,7 +100,8 @@ export function getOrCreateSession(
         created_at: now,
         updated_at: now,
         metadata: metadataJson,
-        agent_state: agentStateJson
+        agent_state: agentStateJson,
+        sort_order: sortOrder
     })
 
     const row = getSession(db, id)
@@ -202,15 +218,41 @@ export function getSessionByNamespace(db: Database, id: string, namespace: strin
 }
 
 export function getSessions(db: Database): StoredSession[] {
-    const rows = db.prepare('SELECT * FROM sessions ORDER BY updated_at DESC').all() as DbSessionRow[]
+    const rows = db.prepare(
+        `SELECT * FROM sessions
+         ORDER BY sort_order IS NULL ASC, sort_order ASC, id ASC`
+    ).all() as DbSessionRow[]
     return rows.map(toStoredSession)
 }
 
 export function getSessionsByNamespace(db: Database, namespace: string): StoredSession[] {
     const rows = db.prepare(
-        'SELECT * FROM sessions WHERE namespace = ? ORDER BY updated_at DESC'
+        `SELECT * FROM sessions
+         WHERE namespace = ?
+         ORDER BY sort_order IS NULL ASC, sort_order ASC, id ASC`
     ).all(namespace) as DbSessionRow[]
     return rows.map(toStoredSession)
+}
+
+export function updateSessionSortOrder(
+    db: Database,
+    id: string,
+    sortOrder: string | null,
+    namespace: string
+): boolean {
+    const result = db.prepare(`
+        UPDATE sessions
+        SET sort_order = @sort_order,
+            seq = seq + 1
+        WHERE id = @id
+          AND namespace = @namespace
+    `).run({
+        id,
+        sort_order: sortOrder,
+        namespace
+    })
+
+    return result.changes === 1
 }
 
 export function deleteSession(db: Database, id: string, namespace: string): boolean {

@@ -1,11 +1,35 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject, type WheelEvent } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
+import {
+    DndContext,
+    KeyboardSensor,
+    MouseSensor,
+    TouchSensor,
+    closestCenter,
+    useSensor,
+    useSensors,
+    type DragEndEvent,
+    type DragStartEvent,
+} from '@dnd-kit/core'
+import {
+    SortableContext,
+    arrayMove,
+    sortableKeyboardCoordinates,
+    useSortable,
+    verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { generateKeyBetween } from 'fractional-indexing'
 import { useSwipeable, type SwipeEventData } from 'react-swipeable'
-import type { SessionSummary } from '@/types/api'
+import type { SessionSummary, SessionsResponse } from '@/types/api'
 import type { ApiClient } from '@/api/client'
 import { useLongPress } from '@/hooks/useLongPress'
 import { usePlatform } from '@/hooks/usePlatform'
-import { useSessionActions } from '@/hooks/mutations/useSessionActions'
+import {
+    useSessionActions,
+    useSessionSortOrderMutation,
+    type SessionSortOrderUpdate
+} from '@/hooks/mutations/useSessionActions'
 import { SessionActionMenu } from '@/components/SessionActionMenu'
 import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -21,6 +45,7 @@ type SessionGroup = {
     machineId: string | null
     displayName: string
     sessions: SessionSummary[]
+    minSortOrder: string | null
     latestUpdatedAt: number
     latestReadAt: number
     hasActiveSession: boolean
@@ -40,11 +65,29 @@ function normalizeTimestamp(value: number): number {
     return value < 1_000_000_000_000 ? value * 1000 : value
 }
 
-function getSessionRank(session: SessionSummary, isUnread: boolean): number {
-    if (session.pendingRequestsCount > 0) return 0
-    if (isUnread && !session.thinking && !session.active) return 1
-    if (isUnread && (session.thinking || session.active)) return 2
-    return 3
+type SessionWithSortOrder = SessionSummary & {
+    sortOrder?: string | null
+    sort_order?: string | null
+}
+
+function parseSortOrderValue(value: unknown): string | null {
+    if (typeof value !== 'string' || value.length === 0) return null
+    return value
+}
+
+export function getSessionSortOrder(session: SessionSummary): string | null {
+    const sessionWithSortOrder = session as SessionWithSortOrder
+    const direct = parseSortOrderValue(sessionWithSortOrder.sortOrder)
+    if (direct !== null) return direct
+    return parseSortOrderValue(sessionWithSortOrder.sort_order)
+}
+
+export function setSessionSortOrderValue(session: SessionSummary, sortOrder: string | null): SessionSummary {
+    return {
+        ...(session as SessionWithSortOrder),
+        sortOrder,
+        sort_order: sortOrder
+    } as SessionSummary
 }
 
 export function loadSessionReadHistory(): SessionReadHistory {
@@ -91,18 +134,18 @@ export function pruneSessionReadHistory(
     return changed ? next : history
 }
 
-export function sortSessionsByPriority(
+export function sortSessionsBySortOrder(
     sessions: SessionSummary[],
-    _readHistory: SessionReadHistory,
-    unreadSessionIds: Set<string>,
-    _now: number = Date.now()
 ): SessionSummary[] {
     return [...sessions].sort((a, b) => {
-        const rankA = getSessionRank(a, unreadSessionIds.has(a.id))
-        const rankB = getSessionRank(b, unreadSessionIds.has(b.id))
-        if (rankA !== rankB) return rankA - rankB
+        const sortOrderA = getSessionSortOrder(a)
+        const sortOrderB = getSessionSortOrder(b)
 
-        if (a.updatedAt !== b.updatedAt) return b.updatedAt - a.updatedAt
+        if (sortOrderA === null && sortOrderB !== null) return 1
+        if (sortOrderA !== null && sortOrderB === null) return -1
+        if (sortOrderA !== null && sortOrderB !== null && sortOrderA !== sortOrderB) {
+            return sortOrderA.localeCompare(sortOrderB)
+        }
 
         return a.id.localeCompare(b.id)
     })
@@ -123,8 +166,8 @@ function getSessionGroupKey(directory: string, machineId: string | null): string
 export function groupSessionsByDirectory(
     sessions: SessionSummary[],
     readHistory: SessionReadHistory,
-    unreadSessionIds: Set<string> = new Set(),
-    now: number = Date.now()
+    _unreadSessionIds: Set<string> = new Set(),
+    _now: number = Date.now()
 ): SessionGroup[] {
     const groups = new Map<string, { directory: string; machineId: string | null; sessions: SessionSummary[] }>()
 
@@ -145,7 +188,13 @@ export function groupSessionsByDirectory(
 
     return Array.from(groups.entries())
         .map(([key, group]) => {
-            const sortedSessions = sortSessionsByPriority(group.sessions, readHistory, unreadSessionIds, now)
+            const sortedSessions = sortSessionsBySortOrder(group.sessions)
+            const minSortOrder = sortedSessions.reduce<string | null>((min, session) => {
+                const sortOrder = getSessionSortOrder(session)
+                if (sortOrder === null) return min
+                if (min === null || sortOrder < min) return sortOrder
+                return min
+            }, null)
 
             const latestUpdatedAt = group.sessions.reduce(
                 (max, s) => (s.updatedAt > max ? s.updatedAt : max),
@@ -164,19 +213,21 @@ export function groupSessionsByDirectory(
                 machineId: group.machineId,
                 displayName,
                 sessions: sortedSessions,
+                minSortOrder,
                 latestUpdatedAt,
                 latestReadAt,
                 hasActiveSession
             }
         })
         .sort((a, b) => {
-            const topA = a.sessions[0]
-            const topB = b.sessions[0]
-            const groupRankA = topA ? getSessionRank(topA, unreadSessionIds.has(topA.id)) : Number.POSITIVE_INFINITY
-            const groupRankB = topB ? getSessionRank(topB, unreadSessionIds.has(topB.id)) : Number.POSITIVE_INFINITY
-            if (groupRankA !== groupRankB) return groupRankA - groupRankB
+            if (a.minSortOrder === null && b.minSortOrder !== null) return 1
+            if (a.minSortOrder !== null && b.minSortOrder === null) return -1
+            if (a.minSortOrder !== null && b.minSortOrder !== null && a.minSortOrder !== b.minSortOrder) {
+                return a.minSortOrder.localeCompare(b.minSortOrder)
+            }
 
-            if (a.latestUpdatedAt !== b.latestUpdatedAt) return b.latestUpdatedAt - a.latestUpdatedAt
+            const machineCompare = (a.machineId ?? '').localeCompare(b.machineId ?? '')
+            if (machineCompare !== 0) return machineCompare
 
             return a.directory.localeCompare(b.directory)
         })
@@ -187,21 +238,112 @@ export const FLAT_DIRECTORY_KEY = '__hapi_flat__'
 export function flattenSessions(
     sessions: SessionSummary[],
     readHistory: SessionReadHistory,
-    unreadSessionIds: Set<string> = new Set(),
-    now: number = Date.now()
+    _unreadSessionIds: Set<string> = new Set(),
+    _now: number = Date.now()
 ): SessionGroup[] {
     if (sessions.length === 0) return []
+
+    const sortedSessions = sortSessionsBySortOrder(sessions)
+    const minSortOrder = sortedSessions.reduce<string | null>((min, session) => {
+        const sortOrder = getSessionSortOrder(session)
+        if (sortOrder === null) return min
+        if (min === null || sortOrder < min) return sortOrder
+        return min
+    }, null)
 
     return [{
         key: FLAT_DIRECTORY_KEY,
         directory: FLAT_DIRECTORY_KEY,
         machineId: null,
         displayName: '',
-        sessions: sortSessionsByPriority(sessions, readHistory, unreadSessionIds, now),
+        sessions: sortedSessions,
+        minSortOrder,
         latestUpdatedAt: sessions.reduce((max, s) => Math.max(max, s.updatedAt), -Infinity),
         latestReadAt: sessions.reduce((max, s) => Math.max(max, readHistory[s.id] ?? -Infinity), -Infinity),
         hasActiveSession: sessions.some(s => s.active)
     }]
+}
+
+export function buildSortOrderUpdatesForReorder(
+    reorderedScope: SessionSummary[],
+    movedSessionId: string
+): SessionSortOrderUpdate[] {
+    const movedIndex = reorderedScope.findIndex(session => session.id === movedSessionId)
+    if (movedIndex < 0) return []
+
+    const movedSession = reorderedScope[movedIndex]
+    if (!movedSession) return []
+
+    const previousSortOrder = movedIndex > 0
+        ? getSessionSortOrder(reorderedScope[movedIndex - 1]!)
+        : null
+    const nextSortOrder = movedIndex < reorderedScope.length - 1
+        ? getSessionSortOrder(reorderedScope[movedIndex + 1]!)
+        : null
+
+    const generated = (() => {
+        try {
+            return generateKeyBetween(previousSortOrder, nextSortOrder)
+        } catch {
+            try {
+                return generateKeyBetween(previousSortOrder, null)
+            } catch {
+                try {
+                    return generateKeyBetween(null, nextSortOrder)
+                } catch {
+                    return generateKeyBetween(null, null)
+                }
+            }
+        }
+    })()
+    if (generated === getSessionSortOrder(movedSession)) {
+        return []
+    }
+
+    return [{
+        sessionId: movedSession.id,
+        sortOrder: generated
+    }]
+}
+
+export function applySortOrderUpdatesToSessions(
+    sessions: SessionSummary[],
+    updates: SessionSortOrderUpdate[]
+): SessionSummary[] {
+    if (updates.length === 0) return sessions
+    const updateMap = new Map(updates.map(update => [update.sessionId, update.sortOrder]))
+    let changed = false
+    const nextSessions = sessions.map(session => {
+        if (!updateMap.has(session.id)) return session
+        changed = true
+        return setSessionSortOrderValue(session, updateMap.get(session.id)!)
+    })
+    return changed ? nextSessions : sessions
+}
+
+export function applyOptimisticSortOrderUpdates(
+    queryClient: QueryClient,
+    updates: SessionSortOrderUpdate[]
+): () => void {
+    if (updates.length === 0) {
+        return () => {
+            // no-op
+        }
+    }
+
+    const previous = queryClient.getQueryData<SessionsResponse>(queryKeys.sessions)
+    queryClient.setQueryData<SessionsResponse>(queryKeys.sessions, current => {
+        if (!current) return current
+        return {
+            ...current,
+            sessions: applySortOrderUpdatesToSessions(current.sessions, updates)
+        }
+    })
+
+    return () => {
+        if (previous === undefined) return
+        queryClient.setQueryData(queryKeys.sessions, previous)
+    }
 }
 
 export function patchGroupsVisuals(
@@ -225,9 +367,16 @@ export function patchGroupsVisuals(
         }
         if (!groupChanged) return group
         anyChanged = true
+        const minSortOrder = patchedSessions.reduce<string | null>((min, session) => {
+            const sortOrder = getSessionSortOrder(session)
+            if (sortOrder === null) return min
+            if (min === null || sortOrder < min) return sortOrder
+            return min
+        }, null)
         return {
             ...group,
             sessions: patchedSessions,
+            minSortOrder,
             hasActiveSession: patchedSessions.some(s => s.active)
         }
     }).filter(group => group.sessions.length > 0)
@@ -446,6 +595,30 @@ function ChevronIcon(props: { className?: string; collapsed?: boolean }) {
     )
 }
 
+function GripVerticalIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <circle cx="9" cy="5" r="1" />
+            <circle cx="9" cy="12" r="1" />
+            <circle cx="9" cy="19" r="1" />
+            <circle cx="15" cy="5" r="1" />
+            <circle cx="15" cy="12" r="1" />
+            <circle cx="15" cy="19" r="1" />
+        </svg>
+    )
+}
+
 function getSessionTitle(session: SessionSummary): string {
     if (session.metadata?.name) {
         return session.metadata.name
@@ -503,6 +676,12 @@ function SessionItem(props: {
     selectionMode: boolean
     selectedForBulk: boolean
     unread?: boolean
+    dndEnabled: boolean
+    dragInstructionsId: string
+    dragHandleBindings: Pick<ReturnType<typeof useSortable>, 'attributes' | 'listeners' | 'setActivatorNodeRef'>
+    dragging: boolean
+    dropTarget: boolean
+    dragInProgress: boolean
 }) {
     const { t } = useTranslation()
     const {
@@ -515,7 +694,13 @@ function SessionItem(props: {
         selected = false,
         selectionMode,
         selectedForBulk,
-        unread = false
+        unread = false,
+        dndEnabled,
+        dragInstructionsId,
+        dragHandleBindings,
+        dragging,
+        dropTarget,
+        dragInProgress
     } = props
     const { haptic, isTouch } = usePlatform()
     const SWIPE_MAX_PX = 112
@@ -538,6 +723,7 @@ function SessionItem(props: {
         return /mac/i.test(platform)
     }, [])
     const enableTrackpadSwipe = !isTouch && isMacPlatform
+    const disableGestureActions = dragInProgress
     const showSwipeUi = isTouch || enableTrackpadSwipe
     const showSwipeAction = showSwipeUi && (isSwiping || swipeOffset < 0)
 
@@ -549,6 +735,7 @@ function SessionItem(props: {
 
     const longPressHandlers = useLongPress({
         onLongPress: (point) => {
+            if (disableGestureActions) return
             if (selectionMode) {
                 onToggleSelected(s.id)
                 return
@@ -558,6 +745,7 @@ function SessionItem(props: {
             setMenuOpen(true)
         },
         onClick: () => {
+            if (disableGestureActions) return
             if (menuOpen) return
             if (selectionMode) {
                 onToggleSelected(s.id)
@@ -565,7 +753,8 @@ function SessionItem(props: {
             }
             onSelect(s.id)
         },
-        threshold: 500
+        threshold: 500,
+        disabled: disableGestureActions
     })
 
     const clearTrackpadSwipeEndTimer = () => {
@@ -631,7 +820,7 @@ function SessionItem(props: {
     }
 
     const handleTrackpadWheel = (event: WheelEvent<HTMLDivElement>) => {
-        if (!enableTrackpadSwipe || isPending) return
+        if (!enableTrackpadSwipe || isPending || disableGestureActions) return
         if (event.deltaMode !== 0) return
         if (Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return
 
@@ -666,12 +855,12 @@ function SessionItem(props: {
         <>
             <div
                 data-session-id={s.id}
-                {...(isTouch && !selectionMode ? swipeHandlers : {})}
-                onWheel={enableTrackpadSwipe && !selectionMode ? handleTrackpadWheel : undefined}
+                {...(isTouch && !selectionMode && !disableGestureActions ? swipeHandlers : {})}
+                onWheel={enableTrackpadSwipe && !selectionMode && !disableGestureActions ? handleTrackpadWheel : undefined}
                 className="relative isolate overflow-hidden group"
                 style={{ touchAction: 'pan-y' }}
             >
-                {showSwipeUi && !selectionMode ? (
+                {showSwipeUi && !selectionMode && !disableGestureActions ? (
                     <div
                         className="absolute inset-y-0 right-0 -z-10 flex w-28 items-center justify-center bg-red-500/85 transition-opacity duration-100 pointer-events-none"
                         style={{ opacity: showSwipeAction ? 1 : 0 }}
@@ -681,14 +870,35 @@ function SessionItem(props: {
                         </span>
                     </div>
                 ) : null}
+                {dropTarget ? (
+                    <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-0.5 bg-[var(--app-link)]" />
+                ) : null}
                 <div
-                    className={`session-list-item relative z-10 flex w-full select-none ${highlighted ? 'bg-[var(--app-secondary-bg)] border-l-2 border-[var(--app-link)]' : 'bg-[var(--app-bg)]'}`}
+                    className={`session-list-item relative z-10 flex w-full select-none ${highlighted ? 'bg-[var(--app-secondary-bg)] border-l-2 border-[var(--app-link)]' : 'bg-[var(--app-bg)]'} ${dragging ? 'opacity-95 ring-2 ring-[var(--app-link)] shadow-[0_4px_12px_rgba(0,0,0,0.15)]' : ''}`}
                     style={{
                         WebkitTouchCallout: 'none',
                         transform: showSwipeUi && swipeOffset !== 0 ? `translateX(${swipeOffset}px)` : undefined,
                         transition: showSwipeUi ? (isSwiping ? 'none' : 'transform 150ms ease-out') : undefined
                     }}
                 >
+                    <button
+                        type="button"
+                        ref={dragHandleBindings.setActivatorNodeRef}
+                        {...dragHandleBindings.attributes}
+                        {...dragHandleBindings.listeners}
+                        disabled={!dndEnabled}
+                        data-drag-handle={s.id}
+                        className={`inline-flex h-11 w-11 shrink-0 items-center justify-center border-r border-[var(--app-divider)] text-[var(--app-hint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] ${dndEnabled ? 'cursor-grab active:cursor-grabbing hover:text-[var(--app-fg)]' : 'cursor-not-allowed opacity-50'}`}
+                        aria-label={dndEnabled
+                            ? t('session.dragHandle.label', { name: sessionName })
+                            : t('session.dragHandle.disabled')}
+                        aria-describedby={dragInstructionsId}
+                        title={dndEnabled
+                            ? t('session.dragHandle.label', { name: sessionName })
+                            : t('session.dragHandle.disabled')}
+                    >
+                        <GripVerticalIcon className="h-5 w-5" />
+                    </button>
                     <button
                         type="button"
                         {...longPressHandlers}
@@ -832,6 +1042,46 @@ function SessionItem(props: {
     )
 }
 
+type SessionItemProps = Parameters<typeof SessionItem>[0]
+
+function SortableSessionItem(
+    props: Omit<SessionItemProps, 'dragHandleBindings' | 'dragging' | 'dropTarget'>
+) {
+    const sortable = useSortable({
+        id: props.session.id,
+        disabled: !props.dndEnabled,
+    })
+
+    const transform = CSS.Transform.toString(sortable.transform)
+    const draggingTransform = sortable.isDragging
+        ? (transform ? `${transform} scale(1.02)` : 'scale(1.02)')
+        : transform
+
+    return (
+        <div
+            ref={sortable.setNodeRef}
+            style={{
+                transform: draggingTransform,
+                transition: sortable.transition,
+            }}
+            className={sortable.isDragging ? 'relative z-50' : undefined}
+            data-session-dragging={sortable.isDragging ? 'true' : 'false'}
+        >
+            <SessionItem
+                {...props}
+                dragging={sortable.isDragging}
+                dropTarget={sortable.isOver && !sortable.isDragging}
+                dragInProgress={props.dragInProgress}
+                dragHandleBindings={{
+                    attributes: sortable.attributes,
+                    listeners: sortable.listeners,
+                    setActivatorNodeRef: sortable.setActivatorNodeRef
+                }}
+            />
+        </div>
+    )
+}
+
 export function SessionList(props: {
     sessions: SessionSummary[]
     onSelect: (sessionId: string) => void
@@ -916,9 +1166,6 @@ export function SessionList(props: {
         if (!selectedSessionId) return
 
         // Update read history when a session is selected.
-        // This runs here (not in the click handler) so that readHistory changes
-        // only after selectedSessionId has updated, keeping the freeze logic
-        // from seeing a re-sorted liveGroups before the selection prop arrives.
         setReadHistory(prev => {
             const next = { ...prev, [selectedSessionId]: Date.now() }
             saveSessionReadHistory(next)
@@ -933,6 +1180,10 @@ export function SessionList(props: {
         })
     }, [selectedSessionId])
 
+    const { setSessionSortOrder, isPending: isSortOrderMutationPending } = useSessionSortOrderMutation(api)
+    const [activeDragSessionId, setActiveDragSessionId] = useState<string | null>(null)
+    const [dragFrozenGroups, setDragFrozenGroups] = useState<SessionGroup[] | null>(null)
+
     const isFlat = props.view === 'flat'
     const liveGroups = useMemo(
         () => isFlat
@@ -940,13 +1191,27 @@ export function SessionList(props: {
             : groupSessionsByDirectory(props.sessions, readHistory, unreadSessionIds),
         [props.sessions, readHistory, unreadSessionIds, isFlat]
     )
-
-    const { displayGroups } = useFrozenGroups(
-        liveGroups,
-        selectedSessionId,
-        props.sessions,
-        isFlat ? 'flat' : 'grouped'
+    const displayGroups = useMemo(
+        () => dragFrozenGroups
+            ? patchGroupsVisuals(dragFrozenGroups, props.sessions)
+            : liveGroups,
+        [dragFrozenGroups, props.sessions, liveGroups]
     )
+
+    const dndEnabled = !selectionMode && !isBulkDeleting && !isSortOrderMutationPending && Boolean(api)
+    const dragInProgress = activeDragSessionId !== null
+    const sensors = useSensors(
+        useSensor(MouseSensor, {
+            activationConstraint: { distance: 4 }
+        }),
+        useSensor(TouchSensor, {
+            activationConstraint: { delay: 200, tolerance: 5 }
+        }),
+        useSensor(KeyboardSensor, {
+            coordinateGetter: sortableKeyboardCoordinates
+        })
+    )
+    const dragInstructionsId = 'session-dnd-instructions'
 
     const listContainerRef = useRef<HTMLDivElement>(null)
 
@@ -1074,6 +1339,65 @@ export function SessionList(props: {
         setSelectedSessionIds(new Set())
     }, [api, queryClient, selectedSessions, t])
 
+    const finishDrag = useCallback(() => {
+        setActiveDragSessionId(null)
+        setDragFrozenGroups(null)
+    }, [])
+
+    useEffect(() => {
+        if (!activeDragSessionId) return
+        const sessionStillExists = props.sessions.some(session => session.id === activeDragSessionId)
+        if (!sessionStillExists) {
+            finishDrag()
+        }
+    }, [activeDragSessionId, finishDrag, props.sessions])
+
+    const handleDragStart = useCallback((event: DragStartEvent) => {
+        if (!dndEnabled) return
+        setActiveDragSessionId(String(event.active.id))
+        setDragFrozenGroups(displayGroups)
+    }, [dndEnabled, displayGroups])
+
+    const handleDragCancel = useCallback(() => {
+        finishDrag()
+    }, [finishDrag])
+
+    const handleScopeDragEnd = useCallback(async (event: DragEndEvent, scopeSessions: SessionSummary[]) => {
+        const activeId = String(event.active.id)
+        const overId = event.over?.id ? String(event.over.id) : null
+
+        if (!overId || activeId === overId || !api) {
+            finishDrag()
+            return
+        }
+
+        const fromIndex = scopeSessions.findIndex(session => session.id === activeId)
+        const toIndex = scopeSessions.findIndex(session => session.id === overId)
+        if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) {
+            finishDrag()
+            return
+        }
+
+        const reorderedScope = arrayMove(scopeSessions, fromIndex, toIndex)
+        const updates = buildSortOrderUpdatesForReorder(reorderedScope, activeId)
+        if (updates.length === 0) {
+            finishDrag()
+            return
+        }
+
+        const rollback = applyOptimisticSortOrderUpdates(queryClient, updates)
+        finishDrag()
+
+        try {
+            for (const update of updates) {
+                await setSessionSortOrder(update)
+            }
+        } catch {
+            rollback()
+            void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
+        }
+    }, [api, finishDrag, queryClient, setSessionSortOrder])
+
     const bulkDeleteDescription = selectedActiveCount > 0
         ? t('dialog.delete.selected.descriptionWithActive', { n: selectedCount, m: selectedActiveCount })
         : t('dialog.delete.selected.description', { n: selectedCount })
@@ -1155,30 +1479,52 @@ export function SessionList(props: {
             ) : null}
 
             <div ref={listContainerRef} className="flex flex-col">
+                <p id={dragInstructionsId} className="sr-only">
+                    {t('session.dragHandle.instructions')}
+                </p>
                 {displayGroups.map((group) => {
                     if (isFlat) {
                         return (
-                            <div key={FLAT_DIRECTORY_KEY} className="flex flex-col divide-y divide-[var(--app-divider)]">
-                                {group.sessions.map((session) => (
-                                    <SessionItem
-                                        key={session.id}
-                                        session={session}
-                                        onSelect={handleSessionSelect}
-                                        onToggleSelected={toggleSelectedSession}
-                                        showPath={false}
-                                        projectLabel={getGroupDisplayName(
-                                            session.metadata?.worktree?.basePath
-                                            ?? session.metadata?.path
-                                            ?? 'Other'
-                                        )}
-                                        api={api}
-                                        selected={session.id === selectedSessionId}
-                                        selectionMode={selectionMode}
-                                        selectedForBulk={selectedSessionIds.has(session.id)}
-                                        unread={unreadSessionIds.has(session.id)}
-                                    />
-                                ))}
-                            </div>
+                            <DndContext
+                                key={FLAT_DIRECTORY_KEY}
+                                sensors={sensors}
+                                collisionDetection={closestCenter}
+                                onDragStart={handleDragStart}
+                                onDragCancel={handleDragCancel}
+                                onDragEnd={(event) => {
+                                    void handleScopeDragEnd(event, group.sessions)
+                                }}
+                            >
+                                <SortableContext
+                                    items={group.sessions.map(session => session.id)}
+                                    strategy={verticalListSortingStrategy}
+                                >
+                                    <div className="flex flex-col divide-y divide-[var(--app-divider)]">
+                                        {group.sessions.map((session) => (
+                                            <SortableSessionItem
+                                                key={session.id}
+                                                session={session}
+                                                onSelect={handleSessionSelect}
+                                                onToggleSelected={toggleSelectedSession}
+                                                showPath={false}
+                                                projectLabel={getGroupDisplayName(
+                                                    session.metadata?.worktree?.basePath
+                                                    ?? session.metadata?.path
+                                                    ?? 'Other'
+                                                )}
+                                                api={api}
+                                                selected={session.id === selectedSessionId}
+                                                selectionMode={selectionMode}
+                                                selectedForBulk={selectedSessionIds.has(session.id)}
+                                                unread={unreadSessionIds.has(session.id)}
+                                                dndEnabled={dndEnabled}
+                                                dragInstructionsId={dragInstructionsId}
+                                                dragInProgress={dragInProgress}
+                                            />
+                                        ))}
+                                    </div>
+                                </SortableContext>
+                            </DndContext>
                         )
                     }
 
@@ -1237,22 +1583,40 @@ export function SessionList(props: {
                                 ) : null}
                             </div>
                             {!isCollapsed ? (
-                                <div className="flex flex-col divide-y divide-[var(--app-divider)] border-b border-[var(--app-divider)]">
-                                    {group.sessions.map((session) => (
-                                        <SessionItem
-                                            key={session.id}
-                                            session={session}
-                                            onSelect={handleSessionSelect}
-                                            onToggleSelected={toggleSelectedSession}
-                                            showPath={false}
-                                            api={api}
-                                            selected={session.id === selectedSessionId}
-                                            selectionMode={selectionMode}
-                                            selectedForBulk={selectedSessionIds.has(session.id)}
-                                            unread={unreadSessionIds.has(session.id)}
-                                        />
-                                    ))}
-                                </div>
+                                <DndContext
+                                    sensors={sensors}
+                                    collisionDetection={closestCenter}
+                                    onDragStart={handleDragStart}
+                                    onDragCancel={handleDragCancel}
+                                    onDragEnd={(event) => {
+                                        void handleScopeDragEnd(event, group.sessions)
+                                    }}
+                                >
+                                    <SortableContext
+                                        items={group.sessions.map(session => session.id)}
+                                        strategy={verticalListSortingStrategy}
+                                    >
+                                        <div className="flex flex-col divide-y divide-[var(--app-divider)] border-b border-[var(--app-divider)]">
+                                            {group.sessions.map((session) => (
+                                                <SortableSessionItem
+                                                    key={session.id}
+                                                    session={session}
+                                                    onSelect={handleSessionSelect}
+                                                    onToggleSelected={toggleSelectedSession}
+                                                    showPath={false}
+                                                    api={api}
+                                                    selected={session.id === selectedSessionId}
+                                                    selectionMode={selectionMode}
+                                                    selectedForBulk={selectedSessionIds.has(session.id)}
+                                                    unread={unreadSessionIds.has(session.id)}
+                                                    dndEnabled={dndEnabled}
+                                                    dragInstructionsId={dragInstructionsId}
+                                                    dragInProgress={dragInProgress}
+                                                />
+                                            ))}
+                                        </div>
+                                    </SortableContext>
+                                </DndContext>
                             ) : null}
                         </div>
                     )

@@ -20,6 +20,7 @@ function makeSession(overrides: Partial<SessionSummary> & { id: string }): Sessi
         thinking: false,
         activeAt: 0,
         updatedAt: 0,
+        sortOrder: null,
         metadata: baseMetadata,
         todoProgress: null,
         pendingRequestsCount: 0
@@ -87,7 +88,9 @@ function buildProps(overrides: Partial<SessionListProps> = {}): SessionListProps
         onRefresh: vi.fn(),
         isLoading: false,
         renderHeader: false,
-        api: null,
+        api: {
+            setSessionSortOrder: vi.fn().mockResolvedValue(undefined)
+        } as unknown as SessionListProps['api'],
         selectedSessionId: null,
         ...overrides
     }
@@ -107,33 +110,7 @@ function getSelectionModeButton(container: HTMLElement): HTMLButtonElement {
     return selectButton
 }
 
-function getSessionMainButton(container: HTMLElement, sessionId: string): HTMLButtonElement {
-    const sessionRow = container.querySelector<HTMLElement>(`[data-session-id="${sessionId}"]`)
-    if (!sessionRow) {
-        throw new Error(`Session row not found: ${sessionId}`)
-    }
-    const buttons = sessionRow.querySelectorAll<HTMLButtonElement>('button')
-    const mainButton = buttons[0]
-    if (!mainButton) {
-        throw new Error(`Session button not found: ${sessionId}`)
-    }
-    return mainButton
-}
-
-function clickSession(container: HTMLElement, sessionId: string): void {
-    const button = getSessionMainButton(container, sessionId)
-    fireEvent.mouseDown(button, { button: 0 })
-    fireEvent.mouseUp(button)
-}
-
-async function waitForReadHistoryWrite(sessionId: string): Promise<void> {
-    await waitFor(() => {
-        const history = JSON.parse(localStorage.getItem('hapi:sessionReadHistory') ?? '{}') as Record<string, number>
-        expect(history[sessionId]).toBeGreaterThan(0)
-    })
-}
-
-describe('SessionList DOM freeze behavior', () => {
+describe('SessionList ordering + DnD UI', () => {
     beforeEach(() => {
         localStorage.clear()
 
@@ -165,135 +142,11 @@ describe('SessionList DOM freeze behavior', () => {
         }
     })
 
-    it('null -> selected applies selection-driven re-sort', async () => {
+    it('flat mode orders globally by sortOrder', () => {
         const sessions = [
-            makeSession({ id: 'anchor', active: true, updatedAt: 100 }),
-            makeSession({ id: 'slow', updatedAt: 100 }),
-            makeSession({ id: 'fast', updatedAt: 200 })
-        ]
-
-        const initialProps = buildProps({ sessions, selectedSessionId: null })
-        const view = renderSessionList(initialProps)
-
-        expect(getRenderedSessionOrder(view.container)).toEqual(['fast', 'anchor', 'slow'])
-
-        view.rerenderSessionList({ ...initialProps, selectedSessionId: 'slow' })
-
-        await waitForReadHistoryWrite('slow')
-
-        await waitFor(() => {
-            expect(getRenderedSessionOrder(view.container)).toEqual(['fast', 'anchor', 'slow'])
-        })
-    })
-
-    it('selected + sessions prop update in same tick resolves to stable sorted order', async () => {
-        const sessions = [
-            makeSession({ id: 'anchor', active: true, updatedAt: 500 }),
-            makeSession({ id: 'slow', updatedAt: 100 }),
-            makeSession({ id: 'fast', updatedAt: 200 })
-        ]
-
-        const initialProps = buildProps({ sessions, selectedSessionId: null })
-        const view = renderSessionList(initialProps)
-
-        expect(getRenderedSessionOrder(view.container)).toEqual(['anchor', 'fast', 'slow'])
-
-        const sessionsUpdatedSameTick = [
-            makeSession({ id: 'anchor', active: true, updatedAt: 500 }),
-            makeSession({ id: 'slow', updatedAt: 900 }),
-            makeSession({ id: 'fast', updatedAt: 200 })
-        ]
-
-        view.rerenderSessionList({
-            ...initialProps,
-            selectedSessionId: 'slow',
-            sessions: sessionsUpdatedSameTick
-        })
-
-        await waitForReadHistoryWrite('slow')
-
-        await waitFor(() => {
-            expect(getRenderedSessionOrder(view.container)).toEqual(['anchor', 'fast', 'slow'])
-        })
-    })
-
-    it('switching selected session freezes immediately, then releases to latest order', async () => {
-        const sessions = [
-            makeSession({ id: 'anchor', active: true, updatedAt: 500 }),
-            makeSession({ id: 'slow', updatedAt: 100 }),
-            makeSession({ id: 'fast', updatedAt: 200 })
-        ]
-
-        const initialProps = buildProps({ sessions, selectedSessionId: null })
-        const view = renderSessionList(initialProps)
-
-        // Baseline order: anchor, fast, slow.
-        expect(getRenderedSessionOrder(view.container)).toEqual(['anchor', 'fast', 'slow'])
-
-        // First selection keeps current order because read-history no longer affects rank.
-        view.rerenderSessionList({ ...initialProps, selectedSessionId: 'slow' })
-        await waitForReadHistoryWrite('slow')
-        await waitFor(() => {
-            expect(getRenderedSessionOrder(view.container)).toEqual(['anchor', 'fast', 'slow'])
-        })
-
-        // Same tick switch selection and update sessions.
-        const sessionsUpdatedSameTick = [
-            makeSession({ id: 'anchor', active: true, updatedAt: 500 }),
-            makeSession({ id: 'slow', updatedAt: 900 }),
-            makeSession({ id: 'fast', active: true, updatedAt: 200 })
-        ]
-
-        view.rerenderSessionList({
-            ...initialProps,
-            selectedSessionId: 'fast',
-            sessions: sessionsUpdatedSameTick
-        })
-
-        await waitForReadHistoryWrite('fast')
-        await waitFor(() => {
-            expect(getRenderedSessionOrder(view.container)).toEqual(['anchor', 'fast', 'slow'])
-        })
-    })
-
-    it('deselect unfreezes and re-sorts DOM order', async () => {
-        const sessions = [
-            makeSession({ id: 'anchor', active: true, updatedAt: 500 }),
-            makeSession({ id: 'slow', updatedAt: 100 }),
-            makeSession({ id: 'fast', updatedAt: 200 })
-        ]
-
-        const initialProps = buildProps({ sessions, selectedSessionId: null })
-        const view = renderSessionList(initialProps)
-
-        // Select slow and update sessions in same tick.
-        const sessionsUpdated = [
-            makeSession({ id: 'anchor', active: true, updatedAt: 500 }),
-            makeSession({ id: 'slow', updatedAt: 900 }),
-            makeSession({ id: 'fast', updatedAt: 200 })
-        ]
-        view.rerenderSessionList({ ...initialProps, selectedSessionId: 'slow', sessions: sessionsUpdated })
-        await waitForReadHistoryWrite('slow')
-
-        // Deselect should force release and adopt live order.
-        view.rerenderSessionList({ ...initialProps, selectedSessionId: null, sessions: sessionsUpdated })
-
-        await waitFor(() => {
-            expect(getRenderedSessionOrder(view.container)).toEqual(['slow', 'anchor', 'fast'])
-        })
-    })
-})
-
-describe('SessionList view toggle behavior', () => {
-    beforeEach(() => {
-        localStorage.clear()
-    })
-
-    it('flat mode hides group headers', () => {
-        const sessions = [
-            makeSession({ id: 'a', metadata: { path: '/repo-a' }, updatedAt: 100 }),
-            makeSession({ id: 'b', metadata: { path: '/repo-b' }, updatedAt: 200 }),
-            makeSession({ id: 'c', metadata: { path: '/repo-c' }, updatedAt: 300 }),
+            makeSession({ id: 'c', sortOrder: 'c', metadata: { path: '/repo-c' } }),
+            makeSession({ id: 'a', sortOrder: 'a', metadata: { path: '/repo-a' } }),
+            makeSession({ id: 'b', sortOrder: 'b', metadata: { path: '/repo-b' } }),
         ]
 
         const view = renderSessionList(buildProps({
@@ -301,15 +154,15 @@ describe('SessionList view toggle behavior', () => {
             view: 'flat'
         }))
 
+        expect(getRenderedSessionOrder(view.container)).toEqual(['a', 'b', 'c'])
         expect(view.container.querySelectorAll('[data-group-header]')).toHaveLength(0)
-        expect(view.container.querySelectorAll('[data-session-project-label]')).toHaveLength(3)
     })
 
-    it('grouped mode unchanged', () => {
+    it('grouped mode orders groups by min sortOrder and sessions by sortOrder', () => {
         const sessions = [
-            makeSession({ id: 'a', metadata: { path: '/repo-a' }, updatedAt: 100 }),
-            makeSession({ id: 'b', metadata: { path: '/repo-b' }, updatedAt: 200 }),
-            makeSession({ id: 'c', metadata: { path: '/repo-c' }, updatedAt: 300 }),
+            makeSession({ id: 'g1-b', sortOrder: 'd', metadata: { path: '/group-one' }, active: true }),
+            makeSession({ id: 'g1-a', sortOrder: 'c', metadata: { path: '/group-one' } }),
+            makeSession({ id: 'g2-a', sortOrder: 'a', metadata: { path: '/group-two' }, active: true }),
         ]
 
         const view = renderSessionList(buildProps({
@@ -317,110 +170,44 @@ describe('SessionList view toggle behavior', () => {
             view: 'grouped'
         }))
 
-        expect(view.container.querySelectorAll('[data-group-header]')).toHaveLength(3)
-        expect(view.container.querySelectorAll('[data-session-project-label]')).toHaveLength(0)
+        const groupHeaders = Array.from(view.container.querySelectorAll<HTMLElement>('[data-group-header]'))
+            .map(el => el.dataset.groupHeader)
+
+        expect(groupHeaders).toEqual(['/group-two', '/group-one'])
+        expect(getRenderedSessionOrder(view.container)).toEqual(['g2-a', 'g1-a', 'g1-b'])
     })
 
-    it('toggle view while session is selected', () => {
+    it('renders always-visible drag handles with aria labels + instructions', () => {
         const sessions = [
-            makeSession({ id: 'active', metadata: { path: '/repo-a' }, active: true, updatedAt: 100 }),
-            makeSession({ id: 'mid', metadata: { path: '/repo-b' }, updatedAt: 200 }),
-            makeSession({ id: 'low', metadata: { path: '/repo-c' }, updatedAt: 50 }),
+            makeSession({ id: 'alpha', sortOrder: 'a', metadata: { path: '/repo-a', name: 'Alpha' } }),
+            makeSession({ id: 'beta', sortOrder: 'b', metadata: { path: '/repo-b', name: 'Beta' } }),
         ]
-        const initialProps = buildProps({
-            sessions,
-            selectedSessionId: 'mid',
-            view: 'grouped'
-        })
-        const view = renderSessionList(initialProps)
 
-        view.rerenderSessionList({
-            ...initialProps,
-            view: 'flat'
-        })
+        const view = renderSessionList(buildProps({ sessions, view: 'flat' }))
 
-        expect(view.container.querySelectorAll('[data-group-header]')).toHaveLength(0)
-        expect(getRenderedSessionOrder(view.container)).toEqual(['mid', 'active', 'low'])
+        const handleButtons = view.container.querySelectorAll<HTMLButtonElement>('[data-drag-handle]')
+        expect(handleButtons).toHaveLength(2)
+        expect(handleButtons[0]?.className).toContain('h-11')
+        expect(handleButtons[0]?.className).toContain('w-11')
+
+        expect(view.container.querySelectorAll('#session-dnd-instructions').length).toBeGreaterThan(0)
+        expect(handleButtons[0]?.getAttribute('aria-label')).toContain('Reorder session')
     })
 
-    it('toggle button hidden during selection mode', () => {
+    it('disables dnd handles in selection mode', async () => {
         const sessions = [
-            makeSession({ id: 'a', metadata: { path: '/repo-a' } }),
+            makeSession({ id: 'alpha', sortOrder: 'a', metadata: { path: '/repo-a', name: 'Alpha' } }),
+            makeSession({ id: 'beta', sortOrder: 'b', metadata: { path: '/repo-b', name: 'Beta' } }),
         ]
-        const view = renderSessionList(buildProps({
-            sessions,
-            view: 'grouped',
-            onToggleView: vi.fn()
-        }))
+
+        const view = renderSessionList(buildProps({ sessions, view: 'flat' }))
 
         fireEvent.click(getSelectionModeButton(view.container))
 
-        expect(view.container.querySelector('button[title="Flat"]')).toBeNull()
-        expect(view.container.querySelector('button[title="Grouped"]')).toBeNull()
-    })
-
-    it('prop-driven view change during selection mode preserves selected set', async () => {
-        const sessions = [
-            makeSession({ id: 'a', metadata: { path: '/repo-a' }, active: true, updatedAt: 100 }),
-            makeSession({ id: 'b', metadata: { path: '/repo-b' }, active: true, updatedAt: 200 }),
-            makeSession({ id: 'c', metadata: { path: '/repo-c' }, active: true, updatedAt: 300 }),
-        ]
-        const initialProps = buildProps({
-            sessions,
-            view: 'grouped'
-        })
-        const view = renderSessionList(initialProps)
-
-        fireEvent.click(getSelectionModeButton(view.container))
-        clickSession(view.container, 'a')
-        clickSession(view.container, 'b')
-
         await waitFor(() => {
-            expect(view.container.querySelectorAll('[aria-pressed="true"]')).toHaveLength(2)
-        })
-
-        view.rerenderSessionList({
-            ...initialProps,
-            view: 'flat'
-        })
-
-        expect(view.container.querySelectorAll('[data-group-header]')).toHaveLength(0)
-        expect(view.container.querySelectorAll('[aria-pressed="true"]')).toHaveLength(2)
-    })
-
-    it('toggle grouped→flat while selected + session data updates in same tick', async () => {
-        const sessions = [
-            makeSession({ id: 'a', metadata: { path: '/repo-a' }, updatedAt: 100 }),
-            makeSession({ id: 'b', metadata: { path: '/repo-b' }, updatedAt: 200 }),
-            makeSession({ id: 'c', metadata: { path: '/repo-c' }, updatedAt: 50 }),
-        ]
-        const initialProps = buildProps({
-            sessions,
-            selectedSessionId: null,
-            view: 'grouped'
-        })
-        const view = renderSessionList(initialProps)
-
-        view.rerenderSessionList({ ...initialProps, selectedSessionId: 'a' })
-        await waitForReadHistoryWrite('a')
-
-        const updatedSessions = [
-            makeSession({ id: 'a', metadata: { path: '/repo-a' }, active: true, updatedAt: 400 }),
-            makeSession({ id: 'b', metadata: { path: '/repo-b' }, updatedAt: 200 }),
-            makeSession({ id: 'c', metadata: { path: '/repo-c' }, updatedAt: 50 }),
-        ]
-
-        view.rerenderSessionList({
-            ...initialProps,
-            sessions: updatedSessions,
-            selectedSessionId: 'a',
-            view: 'flat'
-        })
-
-        await waitFor(() => {
-            expect(view.container.querySelectorAll('[data-group-header]')).toHaveLength(0)
-            expect(getRenderedSessionOrder(view.container)).toEqual(['a', 'b', 'c'])
-            expect(view.container.querySelectorAll('[data-session-project-label]')).toHaveLength(3)
+            const handles = view.container.querySelectorAll<HTMLButtonElement>('[data-drag-handle]')
+            expect(handles[0]).toBeDisabled()
+            expect(handles[1]).toBeDisabled()
         })
     })
 })

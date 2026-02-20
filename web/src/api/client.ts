@@ -485,6 +485,13 @@ export class ApiClient {
         })
     }
 
+    async setSessionSortOrder(sessionId: string, sortOrder: string): Promise<void> {
+        await this.request(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ sort_order: sortOrder })
+        })
+    }
+
     async deleteSession(sessionId: string): Promise<void> {
         await this.request(`/api/sessions/${encodeURIComponent(sessionId)}`, {
             method: 'DELETE'

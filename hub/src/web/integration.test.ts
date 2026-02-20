@@ -225,7 +225,13 @@ describe('web integration routes', () => {
 
         try {
             const alphaSession = ctx.engine.getOrCreateSession('alpha-tag', { path: '/alpha', host: 'alpha-host' }, null, 'alpha')
+            const alphaSecond = ctx.engine.getOrCreateSession('alpha-tag-2', { path: '/alpha-2', host: 'alpha-host' }, null, 'alpha')
+            const alphaUnordered = ctx.engine.getOrCreateSession('alpha-tag-3', { path: '/alpha-3', host: 'alpha-host' }, null, 'alpha')
             const betaSession = ctx.engine.getOrCreateSession('beta-tag', { path: '/beta', host: 'beta-host' }, null, 'beta')
+            await ctx.engine.updateSessionSortOrder(alphaSecond.id, 'a0')
+            await ctx.engine.updateSessionSortOrder(alphaSession.id, 'a0')
+            ctx.store.sessions.updateSessionSortOrder(alphaUnordered.id, null, 'alpha')
+            ctx.engine.handleRealtimeEvent({ type: 'session-updated', sessionId: alphaUnordered.id } as any)
 
             const alphaToken = await getAccessToken(ctx.app, 'alpha')
 
@@ -237,13 +243,17 @@ describe('web integration routes', () => {
             const body = await response.json() as { sessions: Array<{ id: string }> }
             const ids = body.sessions.map((session) => session.id)
             expect(ids).toContain(alphaSession.id)
+            expect(ids).toContain(alphaSecond.id)
+            expect(ids).toContain(alphaUnordered.id)
             expect(ids).not.toContain(betaSession.id)
+            expect(ids.slice(0, 2)).toEqual([alphaSession.id, alphaSecond.id].sort())
+            expect(ids[ids.length - 1]).toBe(alphaUnordered.id)
         } finally {
             ctx.stop()
         }
     })
 
-    it('handles rename/delete for inactive sessions and active conflict', async () => {
+    it('handles session patch updates and delete conflicts', async () => {
         const ctx = createTestContext()
 
         try {
@@ -262,6 +272,9 @@ describe('web integration routes', () => {
                 null,
                 namespace
             )
+            const beforePatch = ctx.engine.getSession(renameOk.id)
+            const beforeUpdatedAt = beforePatch?.updatedAt
+            expect(typeof beforeUpdatedAt).toBe('number')
 
             const concurrentUpdate = ctx.store.sessions.updateSessionMetadata(
                 renameConflict.id,
@@ -275,13 +288,15 @@ describe('web integration routes', () => {
             const renameSuccess = await ctx.app.request(`/api/sessions/${renameOk.id}`, {
                 method: 'PATCH',
                 headers: authJsonHeaders(token),
-                body: JSON.stringify({ name: 'renamed' })
+                body: JSON.stringify({ name: 'renamed', sort_order: 'a0V' })
             })
             expect(renameSuccess.status).toBe(200)
             expect(await renameSuccess.json()).toEqual({ ok: true })
 
             const renamedSession = ctx.engine.getSession(renameOk.id)
             expect(renamedSession?.metadata?.name).toBe('renamed')
+            expect(renamedSession?.sortOrder).toBe('a0V')
+            expect(renamedSession?.updatedAt).toBe(beforeUpdatedAt)
 
             const renameConflictResponse = await ctx.app.request(`/api/sessions/${renameConflict.id}`, {
                 method: 'PATCH',
@@ -289,6 +304,35 @@ describe('web integration routes', () => {
                 body: JSON.stringify({ name: 'mine' })
             })
             expect(renameConflictResponse.status).toBe(409)
+
+            const sortOrderOnlyResponse = await ctx.app.request(`/api/sessions/${renameConflict.id}`, {
+                method: 'PATCH',
+                headers: authJsonHeaders(token),
+                body: JSON.stringify({ sort_order: 'a1' })
+            })
+            expect(sortOrderOnlyResponse.status).toBe(200)
+            expect(await sortOrderOnlyResponse.json()).toEqual({ ok: true })
+
+            const invalidPatchMissingFields = await ctx.app.request(`/api/sessions/${renameOk.id}`, {
+                method: 'PATCH',
+                headers: authJsonHeaders(token),
+                body: JSON.stringify({})
+            })
+            expect(invalidPatchMissingFields.status).toBe(400)
+
+            const invalidPatchSortOrder = await ctx.app.request(`/api/sessions/${renameOk.id}`, {
+                method: 'PATCH',
+                headers: authJsonHeaders(token),
+                body: JSON.stringify({ sort_order: 'bad-order!' })
+            })
+            expect(invalidPatchSortOrder.status).toBe(400)
+
+            const invalidPatchSortOrderLength = await ctx.app.request(`/api/sessions/${renameOk.id}`, {
+                method: 'PATCH',
+                headers: authJsonHeaders(token),
+                body: JSON.stringify({ sort_order: 'a'.repeat(51) })
+            })
+            expect(invalidPatchSortOrderLength.status).toBe(400)
 
             const deleteInactive = ctx.engine.getOrCreateSession(
                 'delete-inactive',

@@ -10,7 +10,8 @@ import {
     getSessionsByNamespace,
     setSessionTodos,
     updateSessionAgentState,
-    updateSessionMetadata
+    updateSessionMetadata,
+    updateSessionSortOrder
 } from './sessions'
 
 export class SessionStore {
@@ -45,6 +46,10 @@ export class SessionStore {
 
     setSessionTodos(id: string, todos: unknown, todosUpdatedAt: number, namespace: string): boolean {
         return setSessionTodos(this.db, id, todos, todosUpdatedAt, namespace)
+    }
+
+    updateSessionSortOrder(id: string, sortOrder: string | null, namespace: string): boolean {
+        return updateSessionSortOrder(this.db, id, sortOrder, namespace)
     }
 
     getSession(id: string): StoredSession | null {

@@ -123,3 +123,29 @@ export function useSessionActions(
             || deleteMutation.isPending,
     }
 }
+
+export type SessionSortOrderUpdate = {
+    sessionId: string
+    sortOrder: string
+}
+
+export function useSessionSortOrderMutation(
+    api: ApiClient | null
+): {
+    setSessionSortOrder: (payload: SessionSortOrderUpdate) => Promise<void>
+    isPending: boolean
+} {
+    const mutation = useMutation({
+        mutationFn: async ({ sessionId, sortOrder }: SessionSortOrderUpdate) => {
+            if (!api) {
+                throw new Error('Session unavailable')
+            }
+            await api.setSessionSortOrder(sessionId, sortOrder)
+        },
+    })
+
+    return {
+        setSessionSortOrder: mutation.mutateAsync,
+        isPending: mutation.isPending
+    }
+}

@@ -136,6 +136,7 @@ export const SessionSchema = z.object({
     metadataVersion: z.number(),
     agentState: AgentStateSchema.nullable(),
     agentStateVersion: z.number(),
+    sortOrder: z.string().nullable(),
     thinking: z.boolean(),
     thinkingAt: z.number(),
     todos: TodosSchema.optional(),

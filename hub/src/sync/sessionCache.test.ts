@@ -19,6 +19,7 @@ function makeSession(id: string, overrides: Partial<Session> = {}): Session {
         metadataVersion: 0,
         agentState: null,
         agentStateVersion: 0,
+        sortOrder: 'a0',
         thinking: false,
         thinkingAt: 0,
         ...overrides
@@ -162,11 +163,35 @@ describe('SessionCache bead link merge behavior', () => {
 
         const oldSession = store.sessions.getOrCreateSession('old-tag', { path: '/repo', host: 'host' }, null, 'default')
         const newSession = store.sessions.getOrCreateSession('new-tag', { path: '/repo', host: 'host' }, null, 'default')
+        expect(oldSession.sortOrder).not.toBe(newSession.sortOrder)
         store.sessionBeads.linkBead(oldSession.id, 'hapi-6uf')
 
         await cache.mergeSessions(oldSession.id, newSession.id, 'default')
 
         expect(store.sessionBeads.getBeadIds(oldSession.id)).toEqual([])
         expect(store.sessionBeads.getBeadIds(newSession.id)).toContain('hapi-6uf')
+        expect(store.sessions.getSession(newSession.id)?.sortOrder).toBe(oldSession.sortOrder)
+    })
+})
+
+describe('SessionCache sort order updates', () => {
+    it('updates sort order without bumping updatedAt', async () => {
+        const store = new Store(':memory:')
+        const sseManager = new SSEManager(0, new VisibilityTracker())
+        const publisher = new EventPublisher(sseManager, () => 'default')
+        const cache = new SessionCache(store, publisher)
+
+        const session = store.sessions.getOrCreateSession('sort-order', { path: '/repo', host: 'host' }, null, 'default')
+        cache.refreshSession(session.id)
+        const before = store.sessions.getSession(session.id)
+        if (!before?.sortOrder) {
+            throw new Error('Session sort order missing before update')
+        }
+
+        await cache.updateSessionSortOrder(session.id, `${before.sortOrder}V`)
+
+        const after = store.sessions.getSession(session.id)
+        expect(after?.sortOrder).toBe(`${before.sortOrder}V`)
+        expect(after?.updatedAt).toBe(before.updatedAt)
     })
 })

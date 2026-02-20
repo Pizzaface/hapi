@@ -14,6 +14,9 @@
     "dependencies": {
         "@assistant-ui/react": "^0.11.53",
         "@assistant-ui/react-markdown": "^0.11.9",
+        "@dnd-kit/core": "^6.3.1",
+        "@dnd-kit/sortable": "^10.0.0",
+        "@dnd-kit/utilities": "^3.2.2",
         "@elevenlabs/react": "^0.13.0",
         "@hapi/protocol": "workspace:*",
         "@radix-ui/react-dialog": "^1.1.15",
@@ -30,6 +33,7 @@
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
         "diff": "^8.0.2",
+        "fractional-indexing": "^3.2.0",
         "hast-util-to-jsx-runtime": "^2.3.6",
         "react": "^19.2.3",
         "react-dom": "^19.2.3",

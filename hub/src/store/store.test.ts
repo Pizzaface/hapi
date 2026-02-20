@@ -1,4 +1,8 @@
+import { Database } from 'bun:sqlite'
 import { describe, expect, it } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { Store } from './index'
 
@@ -180,5 +184,180 @@ describe('Store sessions/machines/messages', () => {
         expect(localIdByLabel.get('to-collide')).toBe('same-local-id')
         expect(localIdByLabel.get('from-collide')).toBeNull()
         expect(localIdByLabel.get('from-unique')).toBe('from-only')
+    })
+
+    it('creates new sessions at top of manual sort order', () => {
+        const store = new Store(':memory:')
+        const first = store.sessions.getOrCreateSession('first', { path: '/repo', host: 'host' }, null, 'alpha')
+        const second = store.sessions.getOrCreateSession('second', { path: '/repo', host: 'host' }, null, 'alpha')
+
+        expect(first.sortOrder).not.toBeNull()
+        expect(second.sortOrder).not.toBeNull()
+        if (!first.sortOrder || !second.sortOrder) {
+            throw new Error('Expected sortOrder to be assigned')
+        }
+
+        expect(second.sortOrder < first.sortOrder).toBe(true)
+        expect(store.sessions.getSessionsByNamespace('alpha').map((session) => session.id)).toEqual([second.id, first.id])
+    })
+
+    it('updates session sort order without bumping updatedAt', () => {
+        const store = new Store(':memory:')
+        const session = store.sessions.getOrCreateSession('order-tag', { path: '/repo', host: 'host' }, null, 'alpha')
+        if (!session.sortOrder) {
+            throw new Error('Expected sortOrder to be set on session creation')
+        }
+
+        const newSortOrder = `${session.sortOrder}V`
+        const changed = store.sessions.updateSessionSortOrder(session.id, newSortOrder, 'alpha')
+        expect(changed).toBe(true)
+
+        const updated = store.sessions.getSession(session.id)
+        expect(updated?.sortOrder).toBe(newSortOrder)
+        expect(updated?.updatedAt).toBe(session.updatedAt)
+    })
+
+    it('migrates v5 sessions to v6 and backfills sort_order by updated_at desc', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'hapi-store-migration-'))
+        const dbPath = join(dir, 'store.sqlite')
+
+        const seedDb = new Database(dbPath, { create: true, readwrite: true, strict: true })
+        seedDb.exec(`
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                tag TEXT,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                machine_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                metadata TEXT,
+                metadata_version INTEGER DEFAULT 1,
+                agent_state TEXT,
+                agent_state_version INTEGER DEFAULT 1,
+                todos TEXT,
+                todos_updated_at INTEGER,
+                active INTEGER DEFAULT 0,
+                active_at INTEGER,
+                seq INTEGER DEFAULT 0
+            );
+            CREATE INDEX idx_sessions_tag ON sessions(tag);
+            CREATE INDEX idx_sessions_tag_namespace ON sessions(tag, namespace);
+
+            CREATE TABLE machines (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                metadata TEXT,
+                metadata_version INTEGER DEFAULT 1,
+                runner_state TEXT,
+                runner_state_version INTEGER DEFAULT 1,
+                active INTEGER DEFAULT 0,
+                active_at INTEGER,
+                seq INTEGER DEFAULT 0
+            );
+            CREATE TABLE messages (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                seq INTEGER NOT NULL,
+                local_id TEXT
+            );
+            CREATE TABLE users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform TEXT NOT NULL,
+                platform_user_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                created_at INTEGER NOT NULL
+            );
+            CREATE TABLE push_subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                namespace TEXT NOT NULL,
+                endpoint TEXT NOT NULL,
+                p256dh TEXT NOT NULL,
+                auth TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            CREATE TABLE user_preferences (
+                namespace TEXT PRIMARY KEY,
+                ready_announcements INTEGER NOT NULL DEFAULT 1,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE session_beads (
+                session_id TEXT NOT NULL,
+                bead_id TEXT NOT NULL,
+                linked_at INTEGER NOT NULL,
+                linked_by TEXT,
+                PRIMARY KEY (session_id, bead_id)
+            );
+            CREATE TABLE bead_snapshots (
+                session_id TEXT NOT NULL,
+                bead_id TEXT NOT NULL,
+                data_json TEXT NOT NULL,
+                fetched_at INTEGER NOT NULL,
+                PRIMARY KEY (session_id, bead_id)
+            );
+            PRAGMA user_version = 5;
+        `)
+
+        const insertSession = seedDb.prepare(`
+            INSERT INTO sessions (
+                id, tag, namespace, machine_id, created_at, updated_at,
+                metadata, metadata_version, agent_state, agent_state_version,
+                todos, todos_updated_at, active, active_at, seq
+            ) VALUES (
+                @id, @tag, @namespace, NULL, @created_at, @updated_at,
+                @metadata, 1, NULL, 1,
+                NULL, NULL, 0, NULL, 0
+            )
+        `)
+
+        insertSession.run({
+            id: 'session-oldest',
+            tag: 'oldest',
+            namespace: 'alpha',
+            created_at: 1_000,
+            updated_at: 1_000,
+            metadata: JSON.stringify({ path: '/repo', host: 'host' })
+        })
+        insertSession.run({
+            id: 'session-middle',
+            tag: 'middle',
+            namespace: 'alpha',
+            created_at: 2_000,
+            updated_at: 2_000,
+            metadata: JSON.stringify({ path: '/repo', host: 'host' })
+        })
+        insertSession.run({
+            id: 'session-newest',
+            tag: 'newest',
+            namespace: 'alpha',
+            created_at: 3_000,
+            updated_at: 3_000,
+            metadata: JSON.stringify({ path: '/repo', host: 'host' })
+        })
+        seedDb.close()
+
+        const store = new Store(dbPath)
+        const migrated = store.sessions.getSessionsByNamespace('alpha')
+        expect(migrated.map((session) => session.id)).toEqual([
+            'session-newest',
+            'session-middle',
+            'session-oldest'
+        ])
+        expect(migrated.every((session) => typeof session.sortOrder === 'string' && session.sortOrder.length > 0)).toBe(true)
+
+        const verifyDb = new Database(dbPath, { create: false, readwrite: true, strict: true })
+        const columns = verifyDb.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>
+        const indexes = verifyDb.prepare('PRAGMA index_list(sessions)').all() as Array<{ name: string }>
+        const versionRow = verifyDb.prepare('PRAGMA user_version').get() as { user_version: number }
+        verifyDb.close()
+
+        expect(columns.some((column) => column.name === 'sort_order')).toBe(true)
+        expect(indexes.some((index) => index.name === 'idx_sessions_namespace_sort_order')).toBe(true)
+        expect(versionRow.user_version).toBe(6)
+
+        rmSync(dir, { recursive: true, force: true })
     })
 })

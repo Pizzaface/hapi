@@ -2,7 +2,7 @@ import { getPermissionModesForFlavor, isModelModeAllowedForFlavor, isPermissionM
 import { ModelModeSchema, PermissionModeSchema } from '@hapi/protocol/schemas'
 import { Hono } from 'hono'
 import { z } from 'zod'
-import type { SyncEngine, Session } from '../../sync/syncEngine'
+import type { SyncEngine } from '../../sync/syncEngine'
 import type { WebAppEnv } from '../middleware/auth'
 import { requireSessionFromParam, requireSyncEngine } from './guards'
 
@@ -14,8 +14,13 @@ const modelModeSchema = z.object({
     model: ModelModeSchema
 })
 
-const renameSessionSchema = z.object({
-    name: z.string().min(1).max(255)
+const SESSION_SORT_ORDER_REGEX = /^[0-9A-Za-z]+$/
+
+const patchSessionSchema = z.object({
+    name: z.string().min(1).max(255).optional(),
+    sort_order: z.string().min(1).max(50).regex(SESSION_SORT_ORDER_REGEX).optional()
+}).refine((value) => value.name !== undefined || value.sort_order !== undefined, {
+    message: 'name or sort_order is required'
 })
 
 const uploadSchema = z.object({
@@ -51,23 +56,24 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             return engine
         }
 
-        const getPendingCount = (s: Session) => s.agentState?.requests ? Object.keys(s.agentState.requests).length : 0
-
         const namespace = c.get('namespace')
         const sessions = engine.getSessionsByNamespace(namespace)
             .sort((a, b) => {
-                // Active sessions first
-                if (a.active !== b.active) {
-                    return a.active ? -1 : 1
+                const aIsNull = a.sortOrder === null
+                const bIsNull = b.sortOrder === null
+                if (aIsNull !== bIsNull) {
+                    return aIsNull ? 1 : -1
                 }
-                // Within active sessions, sort by pending requests count
-                const aPending = getPendingCount(a)
-                const bPending = getPendingCount(b)
-                if (a.active && aPending !== bPending) {
-                    return bPending - aPending
+
+                if (a.sortOrder !== b.sortOrder) {
+                    if (a.sortOrder === null) return 1
+                    if (b.sortOrder === null) return -1
+                    return a.sortOrder < b.sortOrder ? -1 : 1
                 }
-                // Then by updatedAt
-                return b.updatedAt - a.updatedAt
+
+                if (a.id < b.id) return -1
+                if (a.id > b.id) return 1
+                return 0
             })
             .map(toSessionSummary)
 
@@ -417,16 +423,23 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
 
         const body = await c.req.json().catch(() => null)
-        const parsed = renameSessionSchema.safeParse(body)
+        const parsed = patchSessionSchema.safeParse(body)
         if (!parsed.success) {
-            return c.json({ error: 'Invalid body: name is required' }, 400)
+            return c.json({ error: 'Invalid body: provide name and/or sort_order' }, 400)
         }
 
         try {
-            await engine.renameSession(sessionResult.sessionId, parsed.data.name)
+            if (parsed.data.name !== undefined) {
+                await engine.renameSession(sessionResult.sessionId, parsed.data.name)
+            }
+
+            if (parsed.data.sort_order !== undefined) {
+                await engine.updateSessionSortOrder(sessionResult.sessionId, parsed.data.sort_order)
+            }
+
             return c.json({ ok: true })
         } catch (error) {
-            const message = error instanceof Error ? error.message : 'Failed to rename session'
+            const message = error instanceof Error ? error.message : 'Failed to update session'
             // Map concurrency/version errors to 409 conflict
             if (message.includes('concurrently') || message.includes('version')) {
                 return c.json({ error: message }, 409)

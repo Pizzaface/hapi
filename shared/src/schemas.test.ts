@@ -257,6 +257,7 @@ describe('SessionSchema', () => {
         metadataVersion: 0,
         agentState: null,
         agentStateVersion: 0,
+        sortOrder: 'a0',
         thinking: false,
         thinkingAt: 1700000000001
     }

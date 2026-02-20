@@ -10,6 +10,7 @@ function makeSession(overrides: Partial<SessionSummary> & { id: string }): Sessi
         thinking: false,
         activeAt: 0,
         updatedAt: 0,
+        sortOrder: null,
         metadata: { path: '/repo' },
         todoProgress: null,
         pendingRequestsCount: 0,

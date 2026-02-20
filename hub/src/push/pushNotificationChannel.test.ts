@@ -42,6 +42,7 @@ function createSession(overrides: Partial<Session> = {}): Session {
         metadataVersion: 0,
         agentState: null,
         agentStateVersion: 0,
+        sortOrder: 'a0',
         thinking: false,
         thinkingAt: 0,
         ...overrides

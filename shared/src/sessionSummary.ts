@@ -16,6 +16,7 @@ export type SessionSummary = {
     thinking: boolean
     activeAt: number
     updatedAt: number
+    sortOrder: string | null
     metadata: SessionSummaryMetadata | null
     todoProgress: { completed: number; total: number } | null
     pendingRequestsCount: number
@@ -45,6 +46,7 @@ export function toSessionSummary(session: Session): SessionSummary {
         thinking: session.thinking,
         activeAt: session.activeAt,
         updatedAt: session.updatedAt,
+        sortOrder: session.sortOrder,
         metadata,
         todoProgress,
         pendingRequestsCount,
