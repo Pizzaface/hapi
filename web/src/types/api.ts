@@ -80,7 +80,7 @@ export type MachinePathsExistsResponse = { exists: Record<string, boolean> }
 export type MachineGitBranchesResponse = { branches: string[] }
 
 export type SpawnResponse =
-    | { type: 'success'; sessionId: string }
+    | { type: 'success'; sessionId: string; initialPromptDelivery?: 'delivered' | 'timed_out' }
     | { type: 'error'; message: string }
 
 export type GitCommandResponse = {

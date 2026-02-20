@@ -7,6 +7,7 @@ import { parseAccessToken } from '../../utils/accessToken'
 import type { Machine, Session, SyncEngine } from '../../sync/syncEngine'
 
 const bearerSchema = z.string().regex(/^Bearer\s+(.+)$/i)
+const INITIAL_PROMPT_MAX_LENGTH = 100_000
 
 const createOrLoadSessionSchema = z.object({
     tag: z.string().min(1),
@@ -27,7 +28,8 @@ const spawnMachineSessionSchema = z.object({
     yolo: z.boolean().optional(),
     sessionType: z.enum(['simple', 'worktree']).optional(),
     worktreeName: z.string().optional(),
-    worktreeBranch: z.string().optional()
+    worktreeBranch: z.string().optional(),
+    initialPrompt: z.string().max(INITIAL_PROMPT_MAX_LENGTH).optional()
 })
 
 const getMessagesQuerySchema = z.object({
@@ -39,6 +41,18 @@ type CliEnv = {
     Variables: {
         namespace: string
     }
+}
+
+function mapSpawnBodyValidationError(error: z.ZodError): string {
+    const hasOversizedPrompt = error.issues.some((issue) => (
+        issue.path.length === 1
+        && issue.path[0] === 'initialPrompt'
+        && issue.code === 'too_big'
+    ))
+    if (hasOversizedPrompt) {
+        return `Invalid body: initialPrompt must be at most ${INITIAL_PROMPT_MAX_LENGTH} characters`
+    }
+    return 'Invalid body'
 }
 
 function resolveSessionForNamespace(
@@ -211,7 +225,7 @@ export function createCliRoutes(getSyncEngine: () => SyncEngine | null): Hono<Cl
         const json = await c.req.json().catch(() => null)
         const parsed = spawnMachineSessionSchema.safeParse(json)
         if (!parsed.success) {
-            return c.json({ error: 'Invalid body' }, 400)
+            return c.json({ error: mapSpawnBodyValidationError(parsed.error) }, 400)
         }
 
         const result = await engine.spawnSession(
@@ -222,7 +236,8 @@ export function createCliRoutes(getSyncEngine: () => SyncEngine | null): Hono<Cl
             parsed.data.yolo,
             parsed.data.sessionType,
             parsed.data.worktreeName,
-            parsed.data.worktreeBranch
+            parsed.data.worktreeBranch,
+            parsed.data.initialPrompt
         )
 
         return c.json(result)

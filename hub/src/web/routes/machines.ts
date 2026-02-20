@@ -4,6 +4,8 @@ import type { SyncEngine } from '../../sync/syncEngine'
 import type { WebAppEnv } from '../middleware/auth'
 import { requireMachine } from './guards'
 
+const INITIAL_PROMPT_MAX_LENGTH = 100_000
+
 const spawnBodySchema = z.object({
     directory: z.string().min(1),
     agent: z.enum(['claude', 'codex', 'gemini', 'opencode']).optional(),
@@ -11,7 +13,8 @@ const spawnBodySchema = z.object({
     yolo: z.boolean().optional(),
     sessionType: z.enum(['simple', 'worktree']).optional(),
     worktreeName: z.string().optional(),
-    worktreeBranch: z.string().optional()
+    worktreeBranch: z.string().optional(),
+    initialPrompt: z.string().max(INITIAL_PROMPT_MAX_LENGTH).optional()
 })
 
 const pathsExistsSchema = z.object({
@@ -22,6 +25,18 @@ const machineGitBranchesSchema = z.object({
     directory: z.string().min(1),
     limit: z.number().int().min(1).max(500).optional()
 })
+
+function mapSpawnBodyValidationError(error: z.ZodError): string {
+    const hasOversizedPrompt = error.issues.some((issue) => (
+        issue.path.length === 1
+        && issue.path[0] === 'initialPrompt'
+        && issue.code === 'too_big'
+    ))
+    if (hasOversizedPrompt) {
+        return `Invalid body: initialPrompt must be at most ${INITIAL_PROMPT_MAX_LENGTH} characters`
+    }
+    return 'Invalid body'
+}
 
 export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
@@ -52,7 +67,7 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null): Ho
         const body = await c.req.json().catch(() => null)
         const parsed = spawnBodySchema.safeParse(body)
         if (!parsed.success) {
-            return c.json({ error: 'Invalid body' }, 400)
+            return c.json({ error: mapSpawnBodyValidationError(parsed.error) }, 400)
         }
 
         const result = await engine.spawnSession(
@@ -63,7 +78,8 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null): Ho
             parsed.data.yolo,
             parsed.data.sessionType,
             parsed.data.worktreeName,
-            parsed.data.worktreeBranch
+            parsed.data.worktreeBranch,
+            parsed.data.initialPrompt
         )
         return c.json(result)
     })

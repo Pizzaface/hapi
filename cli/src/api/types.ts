@@ -124,7 +124,8 @@ export type CliMachinesResponse = z.infer<typeof CliMachinesResponseSchema>
 export const CliSpawnSessionResponseSchema = z.discriminatedUnion('type', [
     z.object({
         type: z.literal('success'),
-        sessionId: z.string()
+        sessionId: z.string(),
+        initialPromptDelivery: z.enum(['delivered', 'timed_out']).optional()
     }),
     z.object({
         type: z.literal('error'),

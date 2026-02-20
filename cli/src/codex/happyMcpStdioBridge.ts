@@ -78,6 +78,7 @@ export async function runHappyMcpStdioBridge(argv: string[]): Promise<void> {
       sessionType: z.enum(['simple', 'worktree']).optional().describe('Spawn a normal session or a Git worktree session'),
       worktreeName: z.string().optional().describe('Optional worktree name hint (worktree sessions only)'),
       worktreeBranch: z.string().optional().describe('Optional worktree branch name (worktree sessions only)'),
+      initialPrompt: z.string().max(100_000).optional().describe('Optional initial prompt/task to send after spawn (max 100000 chars)'),
     });
 
     const registerForwardTool = (

@@ -52,6 +52,10 @@ export type ResumeSessionResult =
     | { type: 'success'; sessionId: string }
     | { type: 'error'; message: string; code: 'session_not_found' | 'access_denied' | 'no_machine_online' | 'resume_unavailable' | 'resume_failed' }
 
+export type SpawnSessionResult =
+    | { type: 'success'; sessionId: string; initialPromptDelivery?: 'delivered' | 'timed_out' }
+    | { type: 'error'; message: string }
+
 export class SyncEngine {
     private readonly eventPublisher: EventPublisher
     private readonly sessionCache: SessionCache
@@ -260,7 +264,7 @@ export class SyncEngine {
                 path: string
                 previewUrl?: string
             }>
-            sentFrom?: 'telegram-bot' | 'webapp'
+            sentFrom?: 'telegram-bot' | 'webapp' | 'spawn'
         }
     ): Promise<void> {
         await this.messageService.sendMessage(sessionId, payload)
@@ -335,9 +339,59 @@ export class SyncEngine {
         sessionType?: 'simple' | 'worktree',
         worktreeName?: string,
         worktreeBranch?: string,
+        initialPrompt?: string,
         resumeSessionId?: string
-    ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
-        return await this.rpcGateway.spawnSession(machineId, directory, agent, model, yolo, sessionType, worktreeName, worktreeBranch, resumeSessionId)
+    ): Promise<SpawnSessionResult> {
+        const spawnResult = await this.rpcGateway.spawnSession(
+            machineId,
+            directory,
+            agent,
+            model,
+            yolo,
+            sessionType,
+            worktreeName,
+            worktreeBranch,
+            resumeSessionId
+        )
+        if (spawnResult.type !== 'success') {
+            return spawnResult
+        }
+
+        const normalizedPrompt = typeof initialPrompt === 'string' ? initialPrompt.trim() : ''
+        if (!normalizedPrompt) {
+            return spawnResult
+        }
+
+        const becameActive = await this.waitForSessionActive(spawnResult.sessionId, 15_000)
+        if (!becameActive) {
+            console.warn(`[SyncEngine] Initial prompt delivery timed out for session ${spawnResult.sessionId}`)
+            return {
+                type: 'success',
+                sessionId: spawnResult.sessionId,
+                initialPromptDelivery: 'timed_out'
+            }
+        }
+
+        try {
+            await this.messageService.sendMessage(spawnResult.sessionId, {
+                text: normalizedPrompt,
+                sentFrom: 'spawn'
+            })
+            return {
+                type: 'success',
+                sessionId: spawnResult.sessionId,
+                initialPromptDelivery: 'delivered'
+            }
+        } catch (error) {
+            console.warn(
+                `[SyncEngine] Failed to deliver initial prompt for session ${spawnResult.sessionId}: ${error instanceof Error ? error.message : String(error)}`
+            )
+            return {
+                type: 'success',
+                sessionId: spawnResult.sessionId,
+                initialPromptDelivery: 'timed_out'
+            }
+        }
     }
 
     async resumeSession(sessionId: string, namespace: string): Promise<ResumeSessionResult> {
