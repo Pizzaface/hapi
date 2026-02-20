@@ -2,6 +2,8 @@ import type {
     AttachmentMetadata,
     AuthResponse,
     DeleteUploadResponse,
+    ClearInactiveSessionsOlderThan,
+    ClearInactiveSessionsResponse,
     HealthResponse,
     ListDirectoryResponse,
     FileReadResponse,
@@ -184,6 +186,15 @@ export class ApiClient {
 
     async getSessions(): Promise<SessionsResponse> {
         return await this.request<SessionsResponse>('/api/sessions')
+    }
+
+    async clearInactiveSessions(
+        olderThan: ClearInactiveSessionsOlderThan = '30d'
+    ): Promise<ClearInactiveSessionsResponse> {
+        return await this.request<ClearInactiveSessionsResponse>('/api/sessions/clear-inactive', {
+            method: 'POST',
+            body: JSON.stringify({ olderThan })
+        })
     }
 
     async getPushVapidPublicKey(): Promise<PushVapidPublicKeyResponse> {

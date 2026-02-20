@@ -253,6 +253,94 @@ describe('web integration routes', () => {
         }
     })
 
+    it('validates clear-inactive request body', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const token = await getAccessToken(ctx.app, 'alpha')
+
+            const response = await ctx.app.request('/api/sessions/clear-inactive', {
+                method: 'POST',
+                headers: authJsonHeaders(token),
+                body: JSON.stringify({ olderThan: '1d' })
+            })
+
+            expect(response.status).toBe(400)
+            expect(await response.json()).toEqual({ error: 'Invalid body' })
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('clears only matching inactive sessions for namespace + age filter', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const now = Date.now()
+            const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000
+            const token = await getAccessToken(ctx.app, 'alpha')
+
+            const alphaOldInactive = ctx.engine.getOrCreateSession(
+                'alpha-old-inactive',
+                { path: '/repo', host: 'host-a' },
+                null,
+                'alpha'
+            )
+            const alphaRecentInactive = ctx.engine.getOrCreateSession(
+                'alpha-recent-inactive',
+                { path: '/repo', host: 'host-a' },
+                null,
+                'alpha'
+            )
+            const alphaOldActive = ctx.engine.getOrCreateSession(
+                'alpha-old-active',
+                { path: '/repo', host: 'host-a' },
+                null,
+                'alpha'
+            )
+            const betaOldInactive = ctx.engine.getOrCreateSession(
+                'beta-old-inactive',
+                { path: '/repo', host: 'host-b' },
+                null,
+                'beta'
+            )
+            ctx.engine.handleSessionAlive({ sid: alphaOldActive.id, time: now })
+
+            const alphaOldFromCache = ctx.engine.getSession(alphaOldInactive.id)
+            const alphaRecentFromCache = ctx.engine.getSession(alphaRecentInactive.id)
+            const alphaActiveFromCache = ctx.engine.getSession(alphaOldActive.id)
+            const betaOldFromCache = ctx.engine.getSession(betaOldInactive.id)
+
+            if (!alphaOldFromCache || !alphaRecentFromCache || !alphaActiveFromCache || !betaOldFromCache) {
+                throw new Error('Expected test sessions in cache')
+            }
+
+            alphaOldFromCache.updatedAt = now - (thirtyDaysMs + 1_000)
+            alphaRecentFromCache.updatedAt = now - (7 * 24 * 60 * 60 * 1000)
+            alphaActiveFromCache.updatedAt = now - (thirtyDaysMs + 1_000)
+            betaOldFromCache.updatedAt = now - (thirtyDaysMs + 1_000)
+
+            const response = await ctx.app.request('/api/sessions/clear-inactive', {
+                method: 'POST',
+                headers: authJsonHeaders(token),
+                body: JSON.stringify({ olderThan: '30d' })
+            })
+
+            expect(response.status).toBe(200)
+
+            const body = await response.json() as { deleted: string[]; failed: string[] }
+            expect(body.failed).toEqual([])
+            expect(body.deleted).toEqual([alphaOldInactive.id])
+
+            expect(ctx.engine.getSession(alphaOldInactive.id)).toBeUndefined()
+            expect(ctx.engine.getSession(alphaRecentInactive.id)).toBeDefined()
+            expect(ctx.engine.getSession(alphaOldActive.id)).toBeDefined()
+            expect(ctx.engine.getSession(betaOldInactive.id)).toBeDefined()
+        } finally {
+            ctx.stop()
+        }
+    })
+
     it('handles session patch updates and delete conflicts', async () => {
         const ctx = createTestContext()
 

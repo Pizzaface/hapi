@@ -21,15 +21,21 @@ import { CSS } from '@dnd-kit/utilities'
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { generateKeyBetween } from 'fractional-indexing'
 import { useSwipeable, type SwipeEventData } from 'react-swipeable'
-import type { SessionSummary, SessionsResponse } from '@/types/api'
+import type {
+    ClearInactiveSessionsOlderThan,
+    SessionSummary,
+    SessionsResponse
+} from '@/types/api'
 import type { ApiClient } from '@/api/client'
 import { useLongPress } from '@/hooks/useLongPress'
 import { usePlatform } from '@/hooks/usePlatform'
+import { useClearInactiveSessions } from '@/hooks/mutations/useClearInactiveSessions'
 import {
     useSessionActions,
     useSessionSortOrderMutation,
     type SessionSortOrderUpdate
 } from '@/hooks/mutations/useSessionActions'
+import { ClearInactiveDialog } from '@/components/ClearInactiveDialog'
 import { SessionActionMenu } from '@/components/SessionActionMenu'
 import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -40,6 +46,49 @@ import { useTranslation } from '@/lib/use-translation'
 import { ProviderIcon } from './ProviderIcon'
 
 const SESSION_READ_HISTORY_KEY = 'hapi:sessionReadHistory'
+const DAY_MS = 24 * 60 * 60 * 1000
+
+export type ClearInactiveCounts = {
+    '7d': number
+    '30d': number
+    all: number
+}
+
+function getClearInactiveCutoff(now: number, olderThan: Exclude<ClearInactiveSessionsOlderThan, 'all'>): number {
+    return olderThan === '7d'
+        ? now - (7 * DAY_MS)
+        : now - (30 * DAY_MS)
+}
+
+export function getClearInactiveCounts(sessions: SessionSummary[], now: number = Date.now()): ClearInactiveCounts {
+    let all = 0
+    let sevenDays = 0
+    let thirtyDays = 0
+    const cutoff7d = getClearInactiveCutoff(now, '7d')
+    const cutoff30d = getClearInactiveCutoff(now, '30d')
+
+    for (const session of sessions) {
+        if (session.active) {
+            continue
+        }
+
+        all += 1
+
+        if (session.updatedAt < cutoff7d) {
+            sevenDays += 1
+        }
+
+        if (session.updatedAt < cutoff30d) {
+            thirtyDays += 1
+        }
+    }
+
+    return {
+        '7d': sevenDays,
+        '30d': thirtyDays,
+        all
+    }
+}
 
 type SessionGroup = {
     key: string
@@ -1098,6 +1147,7 @@ export function SessionList(props: {
     const [selectionMode, setSelectionMode] = useState(false)
     const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(() => new Set())
     const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
+    const [clearInactiveOpen, setClearInactiveOpen] = useState(false)
     const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null)
     const [isBulkDeleting, setIsBulkDeleting] = useState(false)
 
@@ -1176,6 +1226,10 @@ export function SessionList(props: {
     }, [selectedSessionId])
 
     const { setSessionSortOrder, isPending: isSortOrderMutationPending } = useSessionSortOrderMutation(api)
+    const {
+        clearInactiveSessions,
+        isPending: isClearInactivePending
+    } = useClearInactiveSessions(api)
     const [activeDragSessionId, setActiveDragSessionId] = useState<string | null>(null)
     const [dragFrozenGroups, setDragFrozenGroups] = useState<SessionGroup[] | null>(null)
 
@@ -1193,7 +1247,11 @@ export function SessionList(props: {
         [dragFrozenGroups, props.sessions, liveGroups]
     )
 
-    const dndEnabled = !selectionMode && !isBulkDeleting && !isSortOrderMutationPending && Boolean(api)
+    const dndEnabled = !selectionMode
+        && !isBulkDeleting
+        && !isSortOrderMutationPending
+        && !isClearInactivePending
+        && Boolean(api)
     const dragInProgress = activeDragSessionId !== null
     const sensors = useSensors(
         useSensor(MouseSensor, {
@@ -1225,6 +1283,11 @@ export function SessionList(props: {
 
     const selectedCount = selectedSessions.length
     const selectedActiveCount = selectedSessions.filter(session => session.active).length
+    const clearInactiveCounts = useMemo(
+        () => getClearInactiveCounts(props.sessions),
+        [props.sessions]
+    )
+    const hasInactiveSessions = clearInactiveCounts.all > 0
 
     const [collapseOverrides, setCollapseOverrides] = useState<Map<string, boolean>>(
         () => new Map()
@@ -1333,6 +1396,13 @@ export function SessionList(props: {
         setSelectionMode(false)
         setSelectedSessionIds(new Set())
     }, [api, queryClient, selectedSessions, t])
+
+    const handleClearInactive = useCallback(async (olderThan: ClearInactiveSessionsOlderThan) => {
+        const result = await clearInactiveSessions(olderThan)
+        if (result.failed.length > 0) {
+            throw new Error(t('dialog.clearInactive.error', { n: result.failed.length }))
+        }
+    }, [clearInactiveSessions, t])
 
     const finishDrag = useCallback(() => {
         setActiveDragSessionId(null)
@@ -1456,6 +1526,14 @@ export function SessionList(props: {
                                 {isFlat ? t('sessions.view.flat') : t('sessions.view.grouped')}
                             </button>
                         ) : null}
+                        <button
+                            type="button"
+                            onClick={() => setClearInactiveOpen(true)}
+                            disabled={!hasInactiveSessions || !api || isClearInactivePending}
+                            className="rounded border border-[var(--app-border)] px-2 py-1 text-xs text-[var(--app-hint)] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            {t('sessions.action.clearInactive')}
+                        </button>
                         <button
                             type="button"
                             onClick={handleEnableSelectionMode}
@@ -1617,6 +1695,14 @@ export function SessionList(props: {
                     )
                 })}
             </div>
+
+            <ClearInactiveDialog
+                isOpen={clearInactiveOpen}
+                onClose={() => setClearInactiveOpen(false)}
+                onConfirm={handleClearInactive}
+                isPending={isClearInactivePending}
+                counts={clearInactiveCounts}
+            />
 
             <ConfirmDialog
                 isOpen={bulkDeleteOpen}

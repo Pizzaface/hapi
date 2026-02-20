@@ -65,6 +65,11 @@ export type AuthResponse = {
 export type SessionsResponse = { sessions: SessionSummary[] }
 export type SessionResponse = { session: Session }
 export type SessionBeadsResponse = { beads: BeadSummary[]; stale: boolean }
+export type ClearInactiveSessionsOlderThan = '7d' | '30d' | 'all'
+export type ClearInactiveSessionsResponse = {
+    deleted: string[]
+    failed: string[]
+}
 export type MessagesResponse = {
     messages: DecryptedMessage[]
     page: {

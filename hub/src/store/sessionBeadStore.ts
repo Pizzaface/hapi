@@ -247,4 +247,20 @@ export class SessionBeadStore {
 
         tx()
     }
+
+    deleteSessionBatch(sessionIds: string[]): void {
+        if (sessionIds.length === 0) {
+            return
+        }
+
+        const placeholders = sessionIds.map(() => '?').join(', ')
+        this.db.prepare(
+            `DELETE FROM session_beads
+             WHERE session_id IN (${placeholders})`
+        ).run(...sessionIds)
+        this.db.prepare(
+            `DELETE FROM bead_snapshots
+             WHERE session_id IN (${placeholders})`
+        ).run(...sessionIds)
+    }
 }

@@ -303,6 +303,51 @@ export class SessionCache {
         this.publisher.emit({ type: 'session-removed', sessionId, namespace: session.namespace })
     }
 
+    async clearInactiveSessions(
+        namespace: string,
+        olderThanMs?: number
+    ): Promise<{ deleted: string[]; failed: string[] }> {
+        const cutoff = typeof olderThanMs === 'number'
+            ? Date.now() - olderThanMs
+            : null
+
+        const candidates = Array.from(this.sessions.values())
+            .filter((session) => {
+                if (session.namespace !== namespace) return false
+                if (session.active) return false
+                if (cutoff !== null && session.updatedAt >= cutoff) return false
+                return true
+            })
+            .map((session) => ({ id: session.id, namespace: session.namespace }))
+
+        if (candidates.length === 0) {
+            return { deleted: [], failed: [] }
+        }
+
+        const candidateIds = candidates.map((session) => session.id)
+
+        try {
+            this.store.transaction(() => {
+                this.store.sessionBeads.deleteSessionBatch(candidateIds)
+                const deletedCount = this.store.sessions.deleteSessionBatch(candidateIds, namespace)
+                if (deletedCount !== candidateIds.length) {
+                    throw new Error('Failed to delete all inactive sessions')
+                }
+            })
+        } catch {
+            return { deleted: [], failed: candidateIds }
+        }
+
+        for (const candidate of candidates) {
+            this.sessions.delete(candidate.id)
+            this.lastBroadcastAtBySessionId.delete(candidate.id)
+            this.todoBackfillAttemptedSessionIds.delete(candidate.id)
+            this.publisher.emit({ type: 'session-removed', sessionId: candidate.id, namespace: candidate.namespace })
+        }
+
+        return { deleted: candidateIds, failed: [] }
+    }
+
     async mergeSessions(oldSessionId: string, newSessionId: string, namespace: string): Promise<void> {
         if (oldSessionId === newSessionId) {
             return

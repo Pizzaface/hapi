@@ -115,4 +115,22 @@ describe('SessionBeadStore', () => {
             priority: 1
         })
     })
+
+    it('deleteSessionBatch removes links and snapshots for all provided sessions', () => {
+        const store = makeStore()
+
+        store.sessionBeads.linkBead('session-a', 'hapi-a1')
+        store.sessionBeads.linkBead('session-b', 'hapi-b1')
+        store.sessionBeads.saveSnapshot('session-a', 'hapi-a1', { id: 'hapi-a1' }, 100)
+        store.sessionBeads.saveSnapshot('session-b', 'hapi-b1', { id: 'hapi-b1' }, 100)
+        store.sessionBeads.linkBead('session-c', 'hapi-c1')
+
+        store.sessionBeads.deleteSessionBatch(['session-a', 'session-b'])
+
+        expect(store.sessionBeads.getBeadIds('session-a')).toEqual([])
+        expect(store.sessionBeads.getBeadIds('session-b')).toEqual([])
+        expect(store.sessionBeads.getBeadIds('session-c')).toEqual(['hapi-c1'])
+        expect(store.sessionBeads.getSnapshot('session-a', 'hapi-a1')).toBeNull()
+        expect(store.sessionBeads.getSnapshot('session-b', 'hapi-b1')).toBeNull()
+    })
 })

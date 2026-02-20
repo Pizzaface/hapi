@@ -8,6 +8,7 @@ import {
     applySortOrderUpdatesToSessions,
     buildSortOrderUpdatesForReorder,
     flattenSessions,
+    getClearInactiveCounts,
     getSessionSortOrder,
     getUnreadLabelClass,
     groupSessionsByDirectory,
@@ -212,5 +213,21 @@ describe('SessionList helpers', () => {
     it('uses subdued unread style while thinking', () => {
         expect(getUnreadLabelClass(true)).toContain('opacity-70')
         expect(getUnreadLabelClass(false)).toBe('text-[#34C759]')
+    })
+
+    it('computes clear-inactive counts by age buckets', () => {
+        const now = Date.now()
+        const sessions = [
+            makeSession({ id: 'active', active: true, updatedAt: now - (90 * 24 * 60 * 60 * 1000) }),
+            makeSession({ id: 'inactive-5d', active: false, updatedAt: now - (5 * 24 * 60 * 60 * 1000) }),
+            makeSession({ id: 'inactive-10d', active: false, updatedAt: now - (10 * 24 * 60 * 60 * 1000) }),
+            makeSession({ id: 'inactive-40d', active: false, updatedAt: now - (40 * 24 * 60 * 60 * 1000) }),
+        ]
+
+        expect(getClearInactiveCounts(sessions, now)).toEqual({
+            '7d': 2,
+            '30d': 1,
+            all: 3
+        })
     })
 })

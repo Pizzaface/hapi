@@ -96,6 +96,11 @@ export class Store {
         this.sessionBeads = new SessionBeadStore(this.db)
     }
 
+    transaction<T>(fn: () => T): T {
+        const tx = this.db.transaction(fn)
+        return tx()
+    }
+
     private initSchema(): void {
         const currentVersion = this.getUserVersion()
         if (currentVersion === 0) {

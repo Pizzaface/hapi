@@ -153,6 +153,140 @@ describe('SessionCache thinking state', () => {
     })
 })
 
+describe('SessionCache clearInactiveSessions', () => {
+    function createPersistentCache() {
+        const store = new Store(':memory:')
+        const events: SyncEvent[] = []
+        const sseManager = new SSEManager(0, new VisibilityTracker())
+        const publisher = new EventPublisher(sseManager, () => undefined)
+        publisher.subscribe((event) => events.push(event))
+        const cache = new SessionCache(store, publisher)
+        return { cache, store, events }
+    }
+
+    function setSessionUpdatedAt(cache: SessionCache, sessionId: string, updatedAt: number) {
+        const session = cache.getSession(sessionId)
+        if (!session) {
+            throw new Error(`Session missing in cache: ${sessionId}`)
+        }
+        session.updatedAt = updatedAt
+    }
+
+    it('returns only inactive sessions as delete candidates', async () => {
+        const { cache, store } = createPersistentCache()
+        const now = Date.now()
+        const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000
+
+        const inactive = cache.getOrCreateSession('inactive', { path: '/repo', host: 'host' }, null, 'default')
+        const active = cache.getOrCreateSession('active', { path: '/repo', host: 'host' }, null, 'default')
+        cache.handleSessionAlive({ sid: active.id, time: now })
+
+        setSessionUpdatedAt(cache, inactive.id, now - (thirtyDaysMs + 1_000))
+        setSessionUpdatedAt(cache, active.id, now - (thirtyDaysMs + 1_000))
+
+        store.sessionBeads.linkBead(inactive.id, 'hapi-inactive')
+        store.sessionBeads.saveSnapshot(inactive.id, 'hapi-inactive', { id: 'hapi-inactive' }, now)
+
+        const result = await cache.clearInactiveSessions('default', thirtyDaysMs)
+
+        expect(result.deleted).toEqual([inactive.id])
+        expect(result.failed).toEqual([])
+        expect(cache.getSession(inactive.id)).toBeUndefined()
+        expect(cache.getSession(active.id)).toBeDefined()
+        expect(store.sessions.getSession(inactive.id)).toBeNull()
+        expect(store.sessions.getSession(active.id)).not.toBeNull()
+        expect(store.sessionBeads.getBeadIds(inactive.id)).toEqual([])
+        expect(store.sessionBeads.getSnapshot(inactive.id, 'hapi-inactive')).toBeNull()
+    })
+
+    it('respects age filter cutoff', async () => {
+        const { cache, store } = createPersistentCache()
+        const now = Date.now()
+        const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000
+
+        const oldInactive = cache.getOrCreateSession('old', { path: '/repo', host: 'host' }, null, 'default')
+        const recentInactive = cache.getOrCreateSession('recent', { path: '/repo', host: 'host' }, null, 'default')
+
+        setSessionUpdatedAt(cache, oldInactive.id, now - (thirtyDaysMs + 1_000))
+        setSessionUpdatedAt(cache, recentInactive.id, now - (7 * 24 * 60 * 60 * 1000))
+
+        const result = await cache.clearInactiveSessions('default', thirtyDaysMs)
+
+        expect(result.deleted).toEqual([oldInactive.id])
+        expect(result.failed).toEqual([])
+        expect(store.sessions.getSession(oldInactive.id)).toBeNull()
+        expect(store.sessions.getSession(recentInactive.id)).not.toBeNull()
+    })
+
+    it('batch delete is atomic when underlying delete throws', async () => {
+        const { cache, store, events } = createPersistentCache()
+        const now = Date.now()
+        const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000
+
+        const first = cache.getOrCreateSession('first', { path: '/repo', host: 'host' }, null, 'default')
+        const second = cache.getOrCreateSession('second', { path: '/repo', host: 'host' }, null, 'default')
+        setSessionUpdatedAt(cache, first.id, now - (thirtyDaysMs + 1_000))
+        setSessionUpdatedAt(cache, second.id, now - (thirtyDaysMs + 1_000))
+
+        store.sessionBeads.linkBead(first.id, 'hapi-first')
+        store.sessionBeads.saveSnapshot(first.id, 'hapi-first', { id: 'hapi-first' }, now)
+
+        ;(store.sessions as unknown as { deleteSessionBatch: () => number }).deleteSessionBatch = () => {
+            throw new Error('forced delete failure')
+        }
+
+        events.length = 0
+        const result = await cache.clearInactiveSessions('default', thirtyDaysMs)
+
+        expect(result.deleted).toEqual([])
+        expect(result.failed.sort()).toEqual([first.id, second.id].sort())
+        expect(store.sessions.getSession(first.id)).not.toBeNull()
+        expect(store.sessions.getSession(second.id)).not.toBeNull()
+        expect(store.sessionBeads.getBeadIds(first.id)).toEqual(['hapi-first'])
+        expect(store.sessionBeads.getSnapshot(first.id, 'hapi-first')).not.toBeNull()
+        expect(events.some((event) => event.type === 'session-removed')).toBe(false)
+    })
+
+    it('includes namespace guard when clearing', async () => {
+        const { cache, store } = createPersistentCache()
+        const now = Date.now()
+        const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000
+
+        const alpha = cache.getOrCreateSession('alpha', { path: '/alpha', host: 'host' }, null, 'alpha')
+        const beta = cache.getOrCreateSession('beta', { path: '/beta', host: 'host' }, null, 'beta')
+
+        setSessionUpdatedAt(cache, alpha.id, now - (thirtyDaysMs + 1_000))
+        setSessionUpdatedAt(cache, beta.id, now - (thirtyDaysMs + 1_000))
+
+        const result = await cache.clearInactiveSessions('alpha', thirtyDaysMs)
+
+        expect(result.deleted).toEqual([alpha.id])
+        expect(result.failed).toEqual([])
+        expect(store.sessions.getSession(alpha.id)).toBeNull()
+        expect(store.sessions.getSession(beta.id)).not.toBeNull()
+    })
+
+    it('emits session-removed with explicit namespace', async () => {
+        const { cache, events } = createPersistentCache()
+        const now = Date.now()
+
+        const alpha = cache.getOrCreateSession('alpha', { path: '/alpha', host: 'host' }, null, 'alpha')
+        const beta = cache.getOrCreateSession('beta', { path: '/beta', host: 'host' }, null, 'beta')
+        setSessionUpdatedAt(cache, alpha.id, now - 1_000)
+        setSessionUpdatedAt(cache, beta.id, now - 1_000)
+
+        events.length = 0
+        const result = await cache.clearInactiveSessions('alpha')
+
+        expect(result.deleted).toEqual([alpha.id])
+
+        const removedEvents = events.filter((event) => event.type === 'session-removed')
+        expect(removedEvents).toEqual([
+            { type: 'session-removed', sessionId: alpha.id, namespace: 'alpha' }
+        ])
+    })
+})
+
 
 describe('SessionCache bead link merge behavior', () => {
     it('reassigns bead links when sessions merge', async () => {

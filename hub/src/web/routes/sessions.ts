@@ -33,6 +33,10 @@ const uploadDeleteSchema = z.object({
     path: z.string().min(1)
 })
 
+const clearInactiveSchema = z.object({
+    olderThan: z.enum(['7d', '30d', 'all']).optional()
+}).strict()
+
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 const MULTIPART_UPLOAD_CHUNK_BYTES = 256 * 1024
 
@@ -340,6 +344,39 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
 
         await engine.switchSession(sessionResult.sessionId, 'remote')
         return c.json({ ok: true })
+    })
+
+    app.post('/sessions/clear-inactive', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) {
+            return engine
+        }
+
+        const rawBody = await c.req.text().catch(() => '')
+        let parsedBody: unknown = {}
+        if (rawBody.trim().length > 0) {
+            try {
+                parsedBody = JSON.parse(rawBody) as unknown
+            } catch {
+                return c.json({ error: 'Invalid body' }, 400)
+            }
+        }
+
+        const parsed = clearInactiveSchema.safeParse(parsedBody)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        const olderThan = parsed.data.olderThan ?? '30d'
+        const olderThanMs = olderThan === 'all'
+            ? undefined
+            : olderThan === '7d'
+                ? 7 * 24 * 60 * 60 * 1000
+                : 30 * 24 * 60 * 60 * 1000
+
+        const namespace = c.get('namespace')
+        const result = await engine.clearInactiveSessions(namespace, olderThanMs)
+        return c.json(result)
     })
 
     app.post('/sessions/:id/permission-mode', async (c) => {

@@ -2,6 +2,7 @@ import type { Database } from 'bun:sqlite'
 
 import type { StoredSession, VersionedUpdateResult } from './types'
 import {
+    deleteSessionBatch,
     deleteSession,
     getOrCreateSession,
     getSession,
@@ -70,5 +71,9 @@ export class SessionStore {
 
     deleteSession(id: string, namespace: string): boolean {
         return deleteSession(this.db, id, namespace)
+    }
+
+    deleteSessionBatch(ids: string[], namespace: string): number {
+        return deleteSessionBatch(this.db, ids, namespace)
     }
 }

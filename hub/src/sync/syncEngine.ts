@@ -349,6 +349,13 @@ export class SyncEngine {
         }
     }
 
+    async clearInactiveSessions(
+        namespace: string,
+        olderThanMs?: number
+    ): Promise<{ deleted: string[]; failed: string[] }> {
+        return await this.sessionCache.clearInactiveSessions(namespace, olderThanMs)
+    }
+
     async applySessionConfig(
         sessionId: string,
         config: {

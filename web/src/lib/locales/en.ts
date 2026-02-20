@@ -71,6 +71,7 @@ export default {
   'session.action.archive': 'Archive',
   'session.action.delete': 'Delete',
   'session.action.copy': 'Copy',
+  'sessions.action.clearInactive': 'Clear inactive',
 
   // Dialogs
   'dialog.rename.title': 'Rename Session',
@@ -92,6 +93,17 @@ export default {
   'dialog.delete.selected.confirm': 'Delete selected',
   'dialog.delete.selected.confirming': 'Deleting selected…',
   'dialog.delete.selected.error': 'Could not delete {n} selected sessions. Try again.',
+  'dialog.clearInactive.title': 'Clear inactive sessions',
+  'dialog.clearInactive.description': 'Delete inactive sessions in bulk.',
+  'dialog.clearInactive.ageLabel': 'Age',
+  'dialog.clearInactive.age.7d': 'Older than 7 days',
+  'dialog.clearInactive.age.30d': 'Older than 30 days',
+  'dialog.clearInactive.age.all': 'All inactive',
+  'dialog.clearInactive.matching': '{n} matching inactive sessions',
+  'dialog.clearInactive.allConfirm': 'I understand this will clear all inactive sessions.',
+  'dialog.clearInactive.confirm': 'Clear inactive',
+  'dialog.clearInactive.confirming': 'Clearing inactive…',
+  'dialog.clearInactive.error': 'Failed to clear {n} sessions. Try again.',
   'dialog.error.default': 'Operation failed. Please try again.',
 
   // Common buttons

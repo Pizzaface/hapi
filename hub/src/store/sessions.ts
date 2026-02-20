@@ -261,3 +261,18 @@ export function deleteSession(db: Database, id: string, namespace: string): bool
     ).run(id, namespace)
     return result.changes > 0
 }
+
+export function deleteSessionBatch(db: Database, ids: string[], namespace: string): number {
+    if (ids.length === 0) {
+        return 0
+    }
+
+    const placeholders = ids.map(() => '?').join(', ')
+    const result = db.prepare(
+        `DELETE FROM sessions
+         WHERE namespace = ?
+           AND id IN (${placeholders})`
+    ).run(namespace, ...ids)
+
+    return result.changes
+}

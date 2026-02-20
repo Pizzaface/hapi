@@ -71,6 +71,7 @@ export default {
   'session.action.archive': '归档',
   'session.action.delete': '删除',
   'session.action.copy': '复制',
+  'sessions.action.clearInactive': '清理非活跃',
 
   // Dialogs
   'dialog.rename.title': '重命名会话',
@@ -94,6 +95,17 @@ export default {
   'dialog.delete.selected.confirm': '删除已选',
   'dialog.delete.selected.confirming': '删除已选中…',
   'dialog.delete.selected.error': '有 {n} 个会话删除失败，请重试。',
+  'dialog.clearInactive.title': '清理非活跃会话',
+  'dialog.clearInactive.description': '批量删除非活跃会话。',
+  'dialog.clearInactive.ageLabel': '时间范围',
+  'dialog.clearInactive.age.7d': '早于 7 天',
+  'dialog.clearInactive.age.30d': '早于 30 天',
+  'dialog.clearInactive.age.all': '全部非活跃',
+  'dialog.clearInactive.matching': '匹配到 {n} 个非活跃会话',
+  'dialog.clearInactive.allConfirm': '我确认要清理全部非活跃会话。',
+  'dialog.clearInactive.confirm': '清理非活跃',
+  'dialog.clearInactive.confirming': '清理中…',
+  'dialog.clearInactive.error': '有 {n} 个会话清理失败，请重试。',
   'dialog.error.default': '操作失败，请重试。',
 
   // Common buttons

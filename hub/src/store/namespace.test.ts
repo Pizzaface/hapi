@@ -26,4 +26,16 @@ describe('Store namespace filtering', () => {
         expect(ids).not.toContain('machine-2')
         expect(() => store.machines.getOrCreateMachine('machine-1', { host: 'beta' }, null, 'beta')).toThrow()
     })
+
+    it('deleteSessionBatch is namespace-guarded', () => {
+        const store = new Store(':memory:')
+        const alphaSession = store.sessions.getOrCreateSession('alpha-tag', { path: '/alpha' }, null, 'alpha')
+        const betaSession = store.sessions.getOrCreateSession('beta-tag', { path: '/beta' }, null, 'beta')
+
+        const deleted = store.sessions.deleteSessionBatch([alphaSession.id, betaSession.id], 'alpha')
+
+        expect(deleted).toBe(1)
+        expect(store.sessions.getSession(alphaSession.id)).toBeNull()
+        expect(store.sessions.getSession(betaSession.id)).not.toBeNull()
+    })
 })

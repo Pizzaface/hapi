@@ -1,7 +1,7 @@
 import type { ComponentProps, ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SessionSummary } from '@/types/api'
 import { I18nProvider } from '@/lib/i18n-context'
 import { SessionList } from './SessionList'
@@ -109,6 +109,10 @@ function getSelectionModeButton(container: HTMLElement): HTMLButtonElement {
     }
     return selectButton
 }
+
+afterEach(() => {
+    cleanup()
+})
 
 describe('SessionList ordering + DnD UI', () => {
     beforeEach(() => {
@@ -247,5 +251,68 @@ describe('SessionList provider rendering', () => {
 
         expect(sessionRow?.querySelector('[data-provider-key="unknown"]')).toBeInTheDocument()
         expect(sessionRow).toHaveTextContent('Unknown')
+    })
+})
+
+describe('SessionList clear inactive action', () => {
+    it('opens clear inactive dialog from toolbar', async () => {
+        const sessions = [
+            makeSession({ id: 'inactive-old', updatedAt: Date.now() - (31 * 24 * 60 * 60 * 1000), active: false }),
+        ]
+        const clearInactiveSessions = vi.fn().mockResolvedValue({ deleted: ['inactive-old'], failed: [] })
+
+        const view = renderSessionList(buildProps({
+            sessions,
+            api: {
+                setSessionSortOrder: vi.fn().mockResolvedValue(undefined),
+                clearInactiveSessions
+            } as unknown as SessionListProps['api']
+        }))
+
+        fireEvent.click(within(view.container).getByRole('button', { name: 'Clear inactive' }))
+
+        await waitFor(() => {
+            expect(screen.getByRole('dialog')).toBeInTheDocument()
+        })
+    })
+
+    it('calls clearInactiveSessions after confirming dialog', async () => {
+        const sessions = [
+            makeSession({ id: 'inactive-old', updatedAt: Date.now() - (31 * 24 * 60 * 60 * 1000), active: false }),
+        ]
+        const clearInactiveSessions = vi.fn().mockResolvedValue({ deleted: ['inactive-old'], failed: [] })
+
+        const view = renderSessionList(buildProps({
+            sessions,
+            api: {
+                setSessionSortOrder: vi.fn().mockResolvedValue(undefined),
+                clearInactiveSessions
+            } as unknown as SessionListProps['api']
+        }))
+
+        fireEvent.click(within(view.container).getByRole('button', { name: 'Clear inactive' }))
+        const dialog = await screen.findByRole('dialog')
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Clear inactive' }))
+
+        await waitFor(() => {
+            expect(clearInactiveSessions).toHaveBeenCalledTimes(1)
+            expect(clearInactiveSessions).toHaveBeenCalledWith('30d')
+        })
+    })
+
+    it('disables clear inactive action when there are no inactive sessions', () => {
+        const sessions = [
+            makeSession({ id: 'active', active: true, updatedAt: Date.now() - (90 * 24 * 60 * 60 * 1000) })
+        ]
+
+        const view = renderSessionList(buildProps({
+            sessions,
+            api: {
+                setSessionSortOrder: vi.fn().mockResolvedValue(undefined),
+                clearInactiveSessions: vi.fn().mockResolvedValue({ deleted: [], failed: [] })
+            } as unknown as SessionListProps['api']
+        }))
+
+        expect(within(view.container).getByRole('button', { name: 'Clear inactive' })).toBeDisabled()
     })
 })
