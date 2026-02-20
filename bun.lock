@@ -88,6 +88,10 @@
       "dependencies": {
         "zod": "^4.2.1",
       },
+      "devDependencies": {
+        "bun-types": "^1.3.5",
+        "typescript": "^5",
+      },
     },
     "web": {
       "name": "hapi-web",
