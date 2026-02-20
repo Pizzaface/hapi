@@ -9,6 +9,14 @@ export class RpcRegistry {
             return
         }
 
+        const existingSocketId = this.methodToSocketId.get(method)
+        if (existingSocketId && existingSocketId !== socket.id) {
+            console.warn(
+                '[RpcRegistry] Method ' + method + ' already registered by socket ' + existingSocketId + ', rejecting from ' + socket.id
+            )
+            return
+        }
+
         this.methodToSocketId.set(method, socket.id)
 
         const existing = this.socketIdToMethods.get(socket.id)
@@ -52,4 +60,3 @@ export class RpcRegistry {
         return this.methodToSocketId.get(method) ?? null
     }
 }
-
