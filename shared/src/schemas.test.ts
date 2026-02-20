@@ -7,6 +7,8 @@ import {
     PermissionModeSchema,
     SessionSchema,
     SyncEventSchema,
+    TodoItemSchema,
+    TodosSchema,
     WorktreeMetadataSchema
 } from './schemas'
 
@@ -169,6 +171,76 @@ describe('AgentStateCompletedRequestSchema', () => {
         })
 
         expect(result.success).toBe(false)
+    })
+})
+
+describe('TodoItemSchema', () => {
+    it('applies default priority and id when omitted', () => {
+        const parsed = TodoItemSchema.parse({
+            content: 'Write tests',
+            status: 'pending'
+        })
+
+        expect(parsed.priority).toBe('medium')
+        expect(parsed.id).toBe('')
+    })
+
+    it('accepts optional activeForm and omits it when absent', () => {
+        const withActiveForm = TodoItemSchema.parse({
+            content: 'Review PR',
+            status: 'in_progress',
+            activeForm: 'Reviewing PR'
+        })
+        const withoutActiveForm = TodoItemSchema.parse({
+            content: 'Ship release',
+            status: 'completed'
+        })
+
+        expect(withActiveForm.activeForm).toBe('Reviewing PR')
+        expect(withoutActiveForm).not.toHaveProperty('activeForm')
+    })
+
+    it('rejects invalid enums and missing required fields', () => {
+        expect(TodoItemSchema.safeParse({
+            content: 'Bad priority',
+            status: 'pending',
+            priority: 'urgent'
+        }).success).toBe(false)
+
+        expect(TodoItemSchema.safeParse({
+            content: 'Bad status',
+            status: 'blocked'
+        }).success).toBe(false)
+
+        expect(TodoItemSchema.safeParse({
+            status: 'pending'
+        }).success).toBe(false)
+
+        expect(TodoItemSchema.safeParse({
+            content: 'Missing status'
+        }).success).toBe(false)
+    })
+})
+
+describe('TodosSchema', () => {
+    it('transforms empty ids to todo-N and preserves non-empty ids', () => {
+        const parsed = TodosSchema.parse([
+            { content: 'First', status: 'pending', id: '' },
+            { content: 'Second', status: 'in_progress', id: 'my-id-2' },
+            { content: 'Third', status: 'completed' }
+        ])
+
+        expect(parsed).toEqual([
+            { content: 'First', status: 'pending', priority: 'medium', id: 'todo-1' },
+            { content: 'Second', status: 'in_progress', priority: 'medium', id: 'my-id-2' },
+            { content: 'Third', status: 'completed', priority: 'medium', id: 'todo-3' }
+        ])
+    })
+
+    it('accepts empty array and returns empty array', () => {
+        const parsed = TodosSchema.parse([])
+
+        expect(parsed).toEqual([])
     })
 })
 
