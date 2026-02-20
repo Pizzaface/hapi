@@ -6,7 +6,9 @@ import { useSessionActions } from '@/hooks/mutations/useSessionActions'
 import { SessionActionMenu } from '@/components/SessionActionMenu'
 import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { resolveProvider } from '@/lib/providerTheme'
 import { useTranslation } from '@/lib/use-translation'
+import { ProviderIcon } from './ProviderIcon'
 
 function getSessionTitle(session: Session): string {
     if (session.metadata?.name) {
@@ -92,6 +94,7 @@ export function SessionHeader(props: {
     const { session, api, onSessionDeleted } = props
     const title = useMemo(() => getSessionTitle(session), [session])
     const worktreeBranch = session.metadata?.worktree?.branch
+    const providerDisplay = resolveProvider(session.metadata?.flavor)
 
     const [menuOpen, setMenuOpen] = useState(false)
     const [menuAnchorPoint, setMenuAnchorPoint] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
@@ -156,9 +159,11 @@ export function SessionHeader(props: {
                             {title}
                         </div>
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-[var(--app-hint)]">
-                            <span className="inline-flex items-center gap-1">
-                                <span aria-hidden="true">❖</span>
-                                {session.metadata?.flavor?.trim() || 'unknown'}
+                            <span className="inline-flex items-center gap-1.5">
+                                <ProviderIcon flavor={session.metadata?.flavor} />
+                                <span style={{ color: `var(${providerDisplay.colorVar})` }}>
+                                    {providerDisplay.label}
+                                </span>
                             </span>
                             <span>
                                 {t('session.item.modelMode')}: {session.modelMode || 'default'}

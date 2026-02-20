@@ -211,3 +211,41 @@ describe('SessionList ordering + DnD UI', () => {
         })
     })
 })
+
+describe('SessionList provider rendering', () => {
+    beforeEach(() => {
+        localStorage.clear()
+    })
+
+    it('renders claude provider badge for claude flavor sessions', () => {
+        const sessions = [
+            makeSession({
+                id: 'claude-session',
+                metadata: { path: '/repo-a', flavor: 'claude' },
+                updatedAt: 100
+            })
+        ]
+
+        const view = renderSessionList(buildProps({ sessions, view: 'flat' }))
+        const sessionRow = view.container.querySelector<HTMLElement>('[data-session-id="claude-session"]')
+
+        expect(sessionRow?.querySelector('[data-provider-key="claude"]')).toBeInTheDocument()
+        expect(sessionRow).toHaveTextContent('Claude')
+    })
+
+    it('renders unknown provider badge for missing session flavor', () => {
+        const sessions = [
+            makeSession({
+                id: 'unknown-session',
+                metadata: { path: '/repo-a' },
+                updatedAt: 100
+            })
+        ]
+
+        const view = renderSessionList(buildProps({ sessions, view: 'flat' }))
+        const sessionRow = view.container.querySelector<HTMLElement>('[data-session-id="unknown-session"]')
+
+        expect(sessionRow?.querySelector('[data-provider-key="unknown"]')).toBeInTheDocument()
+        expect(sessionRow).toHaveTextContent('Unknown')
+    })
+})
