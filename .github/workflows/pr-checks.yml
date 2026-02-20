@@ -43,14 +43,31 @@ jobs:
                           return;
                       }
 
+                      const MIN_NO_UI_EXPLANATION_LENGTH = 12;
                       const body = (pr.body ?? '').replace(/<!--[\s\S]*?-->/g, '');
                       const hasImageMarkdown = /!\[[^\]]*]\([^)]+\)/.test(body);
                       const hasHtmlImage = /<img\s+[^>]*src=/i.test(body);
-                      const hasImageLink = /(user-attachments\/assets\/|https?:\/\/\S+\.(png|jpe?g|gif|webp))/i.test(body);
+                      const hasMediaLink = /(user-attachments\/assets\/|https?:\/\/\S+\.(png|jpe?g|gif|webp|mp4|webm|mov))/i.test(body);
                       const hasNoUiOverride = /-\s*\[[xX]\]\s*no visual\/ui changes/i.test(body)
                           || /-\s*\[[xX]\]\s*no ui changes/i.test(body);
+                      const noUiExplanationMatch = body.match(
+                          /(?:^|\n)\s*(?:[-*]\s*)?(?:No visual\/UI changes explanation|No UI changes explanation)\s*[:\-]\s*(.+)$/im
+                      );
+                      const noUiExplanation = noUiExplanationMatch?.[1]?.trim() ?? '';
+                      const hasNoUiExplanation = noUiExplanation.length >= MIN_NO_UI_EXPLANATION_LENGTH;
+                      const hasScreenshotEvidence = hasImageMarkdown || hasHtmlImage || hasMediaLink;
 
-                      if (hasImageMarkdown || hasHtmlImage || hasImageLink || hasNoUiOverride) {
+                      if (hasNoUiOverride && !hasNoUiExplanation) {
+                          core.setFailed(
+                              `UI-related files changed and "No visual/UI changes" is checked, ` +
+                              `but no explanation was provided.\n\n` +
+                              `Add a line like:\n` +
+                              `No visual/UI changes explanation: <why this is non-visual>`
+                          );
+                          return;
+                      }
+
+                      if (hasScreenshotEvidence || hasNoUiOverride) {
                           core.info('Screenshot policy check passed.');
                           return;
                       }
@@ -59,7 +76,8 @@ jobs:
                       core.setFailed(
                           `UI-related files changed but PR body has no screenshot evidence.\n\n` +
                           `Changed UI files (sample):\n${examples}\n\n` +
-                          `Add screenshot(s) to the PR body, or check "No visual/UI changes" in the PR template if changes are non-visual.`
+                          `Add screenshot(s)/recording(s), or check "No visual/UI changes" and include ` +
+                          `"No visual/UI changes explanation: ...".`
                       );
 
     build:

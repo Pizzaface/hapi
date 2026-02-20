@@ -164,9 +164,14 @@ bun run build:single-exe # All-in-one binary
 5. **Clean up** - Clear stashes, prune remote branches
 6. **Verify** - All changes committed AND pushed
 7. **Hand off** - Provide context for next session
+8. **If opening/updating PR with UI-file diffs** - run preflight before `gh pr create`/`gh pr edit`:
+   ```bash
+   bun run pr:ui-preflight -- --body-file /tmp/pr_body.md
+   ```
 
 **CRITICAL RULES:**
 - Work is NOT complete until `git push` succeeds
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
+- For UI diffs: PR body must include screenshots/video OR check "No visual/UI changes" with a short explanation
