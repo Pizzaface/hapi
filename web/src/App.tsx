@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Outlet, useLocation, useMatchRoute, useRouter } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { getTelegramWebApp, isTelegramApp } from '@/hooks/useTelegram'
+import { imageModalState } from '@/lib/image-modal-state'
 import { initializeTheme } from '@/hooks/useTheme'
 import { useAuth } from '@/hooks/useAuth'
 import { useAuthSource } from '@/hooks/useAuthSource'
@@ -64,7 +65,9 @@ function AppInner() {
     }, [])
 
     useEffect(() => {
-        const preventDefault = (event: Event) => {
+        const preventGesture = (event: Event) => {
+            // Allow pinch gestures when image zoom modal is open
+            if (imageModalState.isOpen) return
             event.preventDefault()
         }
 
@@ -82,17 +85,17 @@ function AppInner() {
             }
         }
 
-        document.addEventListener('gesturestart', preventDefault as EventListener, { passive: false })
-        document.addEventListener('gesturechange', preventDefault as EventListener, { passive: false })
-        document.addEventListener('gestureend', preventDefault as EventListener, { passive: false })
+        document.addEventListener('gesturestart', preventGesture as EventListener, { passive: false })
+        document.addEventListener('gesturechange', preventGesture as EventListener, { passive: false })
+        document.addEventListener('gestureend', preventGesture as EventListener, { passive: false })
 
         window.addEventListener('wheel', onWheel, { passive: false })
         window.addEventListener('keydown', onKeyDown)
 
         return () => {
-            document.removeEventListener('gesturestart', preventDefault as EventListener)
-            document.removeEventListener('gesturechange', preventDefault as EventListener)
-            document.removeEventListener('gestureend', preventDefault as EventListener)
+            document.removeEventListener('gesturestart', preventGesture as EventListener)
+            document.removeEventListener('gesturechange', preventGesture as EventListener)
+            document.removeEventListener('gestureend', preventGesture as EventListener)
 
             window.removeEventListener('wheel', onWheel)
             window.removeEventListener('keydown', onKeyDown)

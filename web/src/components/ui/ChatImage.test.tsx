@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { ChatImage } from './ChatImage'
+import { imageModalState } from '@/lib/image-modal-state'
 
 afterEach(() => {
     cleanup()
@@ -81,5 +82,50 @@ describe('ChatImage', () => {
         expect(button.className).toContain('bg-[var(--app-subtle-bg)]')
         button.focus()
         expect(button).toHaveFocus()
+    })
+
+    it('sets imageModalState.isOpen when modal opens and clears on close', async () => {
+        const { container } = render(<ChatImage src="https://example.com/image.png" alt="State test" />)
+        const image = getInlineImage(container)
+        fireEvent.load(image)
+
+        expect(imageModalState.isOpen).toBe(false)
+
+        fireEvent.click(screen.getByRole('button', { name: 'View full size image: State test' }))
+        await screen.findByRole('dialog')
+
+        expect(imageModalState.isOpen).toBe(true)
+
+        fireEvent.keyDown(document, { key: 'Escape' })
+        await waitFor(() => {
+            expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+        })
+
+        expect(imageModalState.isOpen).toBe(false)
+    })
+
+    it('renders zoom wrapper inside modal with TransformComponent', async () => {
+        const { container } = render(<ChatImage src="https://example.com/image.png" alt="Zoom test" />)
+        const image = getInlineImage(container)
+        fireEvent.load(image)
+
+        fireEvent.click(screen.getByRole('button', { name: 'View full size image: Zoom test' }))
+        const dialog = await screen.findByRole('dialog')
+
+        // The zoom wrapper should be present
+        const zoomWrapper = dialog.querySelector('.image-zoom-wrapper')
+        expect(zoomWrapper).toBeInTheDocument()
+    })
+
+    it('keeps close button accessible with z-10 above zoom layer', async () => {
+        const { container } = render(<ChatImage src="https://example.com/image.png" alt="Z-index test" />)
+        const image = getInlineImage(container)
+        fireEvent.load(image)
+
+        fireEvent.click(screen.getByRole('button', { name: 'View full size image: Z-index test' }))
+        const dialog = await screen.findByRole('dialog')
+
+        const closeButton = within(dialog).getByRole('button', { name: 'Close image preview' })
+        expect(closeButton.className).toContain('z-10')
     })
 })

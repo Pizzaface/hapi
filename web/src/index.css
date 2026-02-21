@@ -146,6 +146,11 @@ body {
     }
 }
 
+/* Image zoom modal: allow pinch-to-zoom by overriding global touch-action */
+.image-zoom-wrapper {
+    touch-action: none;
+}
+
 /* Markdown styles */
 .markdown-content a { color: var(--app-link); text-decoration: underline; }
 .markdown-content code { background: var(--app-inline-code-bg); padding: 0.1em 0.3em; border-radius: 4px; font-size: 0.9em; }
