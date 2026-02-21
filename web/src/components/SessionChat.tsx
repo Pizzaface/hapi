@@ -27,6 +27,7 @@ import { DevMessageStream } from '@/components/DevMessageStream'
 import { isClaudeFlavor } from '@/lib/agentFlavorUtils'
 import { useToast } from '@/lib/toast-context'
 import { MODEL_MODES } from '@hapi/protocol'
+import { IntroCard } from '@/components/AssistantChat/IntroCard'
 import { isExitSlashCommand } from './sessionExitCommand'
 
 export function SessionChat(props: {
@@ -386,6 +387,16 @@ export function SessionChat(props: {
                             </div>
                         </div>
                     ) : null}
+
+                    <IntroCard
+                        flavor={props.session.metadata?.flavor}
+                        permissionMode={props.session.permissionMode}
+                        modelMode={props.session.modelMode}
+                        path={props.session.metadata?.path}
+                        worktree={props.session.metadata?.worktree}
+                        startedBy={props.session.metadata?.startedBy}
+                        startedFromRunner={props.session.metadata?.startedFromRunner}
+                    />
 
                     <AssistantRuntimeProvider runtime={runtime}>
                         <div className="relative flex min-h-0 flex-1 flex-col">
