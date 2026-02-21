@@ -5,6 +5,7 @@ export type StoredUserPreferences = {
     readyAnnouncements: boolean
     permissionNotifications: boolean
     errorNotifications: boolean
+    teamGroupStyle: string
     updatedAt: number
 }
 
@@ -12,6 +13,7 @@ export type UserPreferencesUpdate = {
     readyAnnouncements?: boolean
     permissionNotifications?: boolean
     errorNotifications?: boolean
+    teamGroupStyle?: string
 }
 
 type DbUserPreferencesRow = {
@@ -19,6 +21,7 @@ type DbUserPreferencesRow = {
     ready_announcements: number
     permission_notifications: number
     error_notifications: number
+    team_group_style: string
     updated_at: number
 }
 
@@ -28,6 +31,7 @@ function toStoredUserPreferences(row: DbUserPreferencesRow): StoredUserPreferenc
         readyAnnouncements: row.ready_announcements !== 0,
         permissionNotifications: row.permission_notifications !== 0,
         errorNotifications: row.error_notifications !== 0,
+        teamGroupStyle: row.team_group_style,
         updatedAt: row.updated_at
     }
 }
@@ -43,6 +47,7 @@ export function getUserPreferences(db: Database, namespace: string): StoredUserP
             readyAnnouncements: true,
             permissionNotifications: true,
             errorNotifications: true,
+            teamGroupStyle: 'card',
             updatedAt: 0
         }
     }
@@ -63,22 +68,25 @@ export function upsertUserPreferences(
         readyAnnouncements: updates.readyAnnouncements ?? current.readyAnnouncements,
         permissionNotifications: updates.permissionNotifications ?? current.permissionNotifications,
         errorNotifications: updates.errorNotifications ?? current.errorNotifications,
+        teamGroupStyle: updates.teamGroupStyle ?? current.teamGroupStyle,
         updatedAt: now
     }
 
     db.prepare(`
-        INSERT INTO user_preferences (namespace, ready_announcements, permission_notifications, error_notifications, updated_at)
-        VALUES (@namespace, @ready_announcements, @permission_notifications, @error_notifications, @updated_at)
+        INSERT INTO user_preferences (namespace, ready_announcements, permission_notifications, error_notifications, team_group_style, updated_at)
+        VALUES (@namespace, @ready_announcements, @permission_notifications, @error_notifications, @team_group_style, @updated_at)
         ON CONFLICT(namespace) DO UPDATE SET
             ready_announcements = excluded.ready_announcements,
             permission_notifications = excluded.permission_notifications,
             error_notifications = excluded.error_notifications,
+            team_group_style = excluded.team_group_style,
             updated_at = excluded.updated_at
     `).run({
         namespace,
         ready_announcements: next.readyAnnouncements ? 1 : 0,
         permission_notifications: next.permissionNotifications ? 1 : 0,
         error_notifications: next.errorNotifications ? 1 : 0,
+        team_group_style: next.teamGroupStyle,
         updated_at: now
     })
 

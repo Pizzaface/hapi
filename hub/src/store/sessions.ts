@@ -24,6 +24,7 @@ type DbSessionRow = {
     seq: number
     sort_order: string | null
     parent_session_id: string | null
+    accept_all_messages: number
 }
 
 function toStoredSession(row: DbSessionRow): StoredSession {
@@ -44,7 +45,8 @@ function toStoredSession(row: DbSessionRow): StoredSession {
         activeAt: row.active_at,
         seq: row.seq,
         sortOrder: row.sort_order,
-        parentSessionId: row.parent_session_id
+        parentSessionId: row.parent_session_id,
+        acceptAllMessages: row.accept_all_messages === 1
     }
 }
 

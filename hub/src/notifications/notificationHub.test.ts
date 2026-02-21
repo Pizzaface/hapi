@@ -45,6 +45,7 @@ class FakePreferencesStore {
             readyAnnouncements: this.prefs.readyAnnouncements,
             permissionNotifications: this.prefs.permissionNotifications,
             errorNotifications: true,
+            teamGroupStyle: 'card',
             updatedAt: 0
         }
     }

@@ -217,7 +217,7 @@ describe('Store sessions/machines/messages', () => {
         expect(updated?.updatedAt).toBe(session.updatedAt)
     })
 
-    it('migrates v6 to v8 and adds parent_session_id, permission_notifications, and error_notifications columns', () => {
+    it('migrates v6 to v9 with parent_session_id, notifications, teams, and accept_all_messages', () => {
         const dir = mkdtempSync(join(tmpdir(), 'hapi-store-migration-v7-'))
         const dbPath = join(dir, 'store.sqlite')
 
@@ -310,26 +310,48 @@ describe('Store sessions/machines/messages', () => {
         expect(prefs.permissionNotifications).toBe(true)
         expect(prefs.errorNotifications).toBe(true)
         expect(prefs.readyAnnouncements).toBe(true)
+        expect(prefs.teamGroupStyle).toBe('card')
 
         const verifyDb = new Database(dbPath, { create: false, readwrite: false, strict: true })
-        const columns = verifyDb.prepare('PRAGMA table_info(user_preferences)').all() as Array<{ name: string }>
+        const prefColumns = verifyDb.prepare('PRAGMA table_info(user_preferences)').all() as Array<{ name: string }>
+        const sessionColumns = verifyDb.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>
+        const tables = verifyDb.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>
         const versionRow = verifyDb.prepare('PRAGMA user_version').get() as { user_version: number }
+
+        // Verify always-on team was seeded
+        verifyDb.exec('PRAGMA foreign_keys = ON')
+        const alwaysOn = verifyDb.prepare("SELECT * FROM teams WHERE id = 'always-on'").get() as { name: string; persistent: number; color: string } | undefined
         verifyDb.close()
 
-        const columnNames = columns.map((c) => c.name)
-        expect(columnNames).toContain('permission_notifications')
-        expect(columnNames).toContain('error_notifications')
-        expect(versionRow.user_version).toBe(8)
+        const prefColumnNames = prefColumns.map((c) => c.name)
+        const sessionColumnNames = sessionColumns.map((c) => c.name)
+        const tableNames = tables.map((t) => t.name)
+
+        expect(prefColumnNames).toContain('permission_notifications')
+        expect(prefColumnNames).toContain('error_notifications')
+        expect(prefColumnNames).toContain('team_group_style')
+        expect(sessionColumnNames).toContain('accept_all_messages')
+        expect(sessionColumnNames).toContain('parent_session_id')
+        expect(tableNames).toContain('teams')
+        expect(tableNames).toContain('team_members')
+        expect(tableNames).toContain('group_sort_orders')
+        expect(versionRow.user_version).toBe(9)
+
+        expect(alwaysOn).toBeDefined()
+        expect(alwaysOn!.name).toBe('Always On')
+        expect(alwaysOn!.persistent).toBe(1)
+        expect(alwaysOn!.color).toBe('#10B981')
 
         rmSync(dir, { recursive: true, force: true })
     })
 
-    it('fresh DB includes permission_notifications and error_notifications with defaults', () => {
+    it('fresh DB includes all preference defaults including teamGroupStyle', () => {
         const store = new Store(':memory:')
         const prefs = store.userPreferences.get('default')
         expect(prefs.readyAnnouncements).toBe(true)
         expect(prefs.permissionNotifications).toBe(true)
         expect(prefs.errorNotifications).toBe(true)
+        expect(prefs.teamGroupStyle).toBe('card')
     })
 
     it('UserPreferencesStore.update sets permissionNotifications correctly', () => {
@@ -479,7 +501,7 @@ describe('Store sessions/machines/messages', () => {
 
         expect(columns.some((column) => column.name === 'sort_order')).toBe(true)
         expect(indexes.some((index) => index.name === 'idx_sessions_namespace_sort_order')).toBe(true)
-        expect(versionRow.user_version).toBe(8)
+        expect(versionRow.user_version).toBe(9)
         expect(columns.some((column) => column.name === 'parent_session_id')).toBe(true)
         expect(indexes.some((index) => index.name === 'idx_sessions_parent')).toBe(true)
 
@@ -524,5 +546,250 @@ describe('Store sessions/machines/messages', () => {
 
         const childFromDb = store.sessions.getSession(child.id)
         expect(childFromDb?.parentSessionId).toBe(parent.id)
+    })
+
+    it('fresh DB includes acceptAllMessages default on sessions', () => {
+        const store = new Store(':memory:')
+        const session = store.sessions.getOrCreateSession('test-tag', { path: '/repo' }, null, 'alpha')
+        expect(session.acceptAllMessages).toBe(false)
+    })
+
+    it('fresh DB includes teams tables and always-on team', () => {
+        const store = new Store(':memory:')
+        const alwaysOn = store.teams.getTeam('always-on', 'default')
+        expect(alwaysOn).not.toBeNull()
+        expect(alwaysOn!.name).toBe('Always On')
+        expect(alwaysOn!.persistent).toBe(true)
+        expect(alwaysOn!.color).toBe('#10B981')
+    })
+})
+
+describe('TeamStore', () => {
+    it('creates a team and returns it with generated id', () => {
+        const store = new Store(':memory:')
+        const team = store.teams.createTeam('My Team', 'alpha', { color: '#FF0000' })
+
+        expect(team.name).toBe('My Team')
+        expect(team.namespace).toBe('alpha')
+        expect(team.color).toBe('#FF0000')
+        expect(team.persistent).toBe(false)
+        expect(team.ttlSeconds).toBe(3600)
+        expect(team.id).toBeTruthy()
+        expect(team.id.length).toBe(16) // hex(randomblob(8)) = 16 chars
+    })
+
+    it('creates a team with explicit id', () => {
+        const store = new Store(':memory:')
+        const team = store.teams.createTeam('Custom ID Team', 'alpha', { id: 'my-custom-id' })
+
+        expect(team.id).toBe('my-custom-id')
+        expect(team.name).toBe('Custom ID Team')
+    })
+
+    it('enforces unique name per namespace', () => {
+        const store = new Store(':memory:')
+        store.teams.createTeam('Unique Team', 'alpha')
+
+        expect(() => store.teams.createTeam('Unique Team', 'alpha')).toThrow()
+
+        // Same name in different namespace is OK
+        const betaTeam = store.teams.createTeam('Unique Team', 'beta')
+        expect(betaTeam.namespace).toBe('beta')
+    })
+
+    it('isolates teams by namespace', () => {
+        const store = new Store(':memory:')
+        const alphaTeam = store.teams.createTeam('Team A', 'alpha')
+        store.teams.createTeam('Team B', 'beta')
+
+        const alphaTeams = store.teams.getTeamsByNamespace('alpha')
+        expect(alphaTeams).toHaveLength(1)
+        expect(alphaTeams[0]!.id).toBe(alphaTeam.id)
+
+        // getTeam with wrong namespace returns null
+        expect(store.teams.getTeam(alphaTeam.id, 'beta')).toBeNull()
+        expect(store.teams.getTeam(alphaTeam.id, 'alpha')).not.toBeNull()
+    })
+
+    it('updates team fields', () => {
+        const store = new Store(':memory:')
+        const team = store.teams.createTeam('Original', 'alpha', { color: '#000' })
+
+        const updated = store.teams.updateTeam(team.id, 'alpha', { name: 'Renamed', color: '#FFF' })
+        expect(updated).toBe(true)
+
+        const fetched = store.teams.getTeam(team.id, 'alpha')
+        expect(fetched!.name).toBe('Renamed')
+        expect(fetched!.color).toBe('#FFF')
+    })
+
+    it('protects always-on team from rename', () => {
+        const store = new Store(':memory:')
+
+        expect(() => store.teams.updateTeam('always-on', 'default', { name: 'Hacked' })).toThrow(
+            'Cannot rename the always-on team'
+        )
+
+        // Color change is allowed
+        const colorUpdated = store.teams.updateTeam('always-on', 'default', { color: '#0000FF' })
+        expect(colorUpdated).toBe(true)
+        expect(store.teams.getTeam('always-on', 'default')!.color).toBe('#0000FF')
+    })
+
+    it('protects always-on team from delete', () => {
+        const store = new Store(':memory:')
+
+        expect(() => store.teams.deleteTeam('always-on', 'default')).toThrow(
+            'Cannot delete the always-on team'
+        )
+    })
+
+    it('deletes a team', () => {
+        const store = new Store(':memory:')
+        const team = store.teams.createTeam('Deletable', 'alpha')
+
+        const deleted = store.teams.deleteTeam(team.id, 'alpha')
+        expect(deleted).toBe(true)
+        expect(store.teams.getTeam(team.id, 'alpha')).toBeNull()
+    })
+
+    it('adds and removes team members', () => {
+        const store = new Store(':memory:')
+        const team = store.teams.createTeam('Members Test', 'alpha')
+        const session = store.sessions.getOrCreateSession('s1', { path: '/repo' }, null, 'alpha')
+
+        const added = store.teams.addMember(team.id, session.id, 'alpha')
+        expect(added).toBe(true)
+
+        const members = store.teams.getTeamMembers(team.id, 'alpha')
+        expect(members).toEqual([session.id])
+
+        const removed = store.teams.removeMember(team.id, session.id, 'alpha')
+        expect(removed).toBe(true)
+        expect(store.teams.getTeamMembers(team.id, 'alpha')).toEqual([])
+    })
+
+    it('enforces one-team-per-session (UNIQUE constraint)', () => {
+        const store = new Store(':memory:')
+        const team1 = store.teams.createTeam('Team 1', 'alpha')
+        const team2 = store.teams.createTeam('Team 2', 'alpha')
+        const session = store.sessions.getOrCreateSession('s1', { path: '/repo' }, null, 'alpha')
+
+        store.teams.addMember(team1.id, session.id, 'alpha')
+
+        // Second add to different team should fail
+        const secondAdd = store.teams.addMember(team2.id, session.id, 'alpha')
+        expect(secondAdd).toBe(false)
+
+        // Session is still in team1
+        const teamForSession = store.teams.getTeamForSession(session.id, 'alpha')
+        expect(teamForSession!.id).toBe(team1.id)
+    })
+
+    it('getTeamForSession returns the team a session belongs to', () => {
+        const store = new Store(':memory:')
+        const team = store.teams.createTeam('My Team', 'alpha')
+        const session = store.sessions.getOrCreateSession('s1', { path: '/repo' }, null, 'alpha')
+
+        expect(store.teams.getTeamForSession(session.id, 'alpha')).toBeNull()
+
+        store.teams.addMember(team.id, session.id, 'alpha')
+
+        const found = store.teams.getTeamForSession(session.id, 'alpha')
+        expect(found!.id).toBe(team.id)
+        expect(found!.name).toBe('My Team')
+    })
+
+    it('areInSameTeam returns true for sessions sharing a team', () => {
+        const store = new Store(':memory:')
+        const team = store.teams.createTeam('Shared Team', 'alpha')
+        const s1 = store.sessions.getOrCreateSession('s1', { path: '/repo' }, null, 'alpha')
+        const s2 = store.sessions.getOrCreateSession('s2', { path: '/repo' }, null, 'alpha')
+        const s3 = store.sessions.getOrCreateSession('s3', { path: '/repo' }, null, 'alpha')
+
+        store.teams.addMember(team.id, s1.id, 'alpha')
+        store.teams.addMember(team.id, s2.id, 'alpha')
+
+        expect(store.teams.areInSameTeam(s1.id, s2.id, 'alpha')).toBe(true)
+        expect(store.teams.areInSameTeam(s1.id, s3.id, 'alpha')).toBe(false)
+        expect(store.teams.areInSameTeam(s2.id, s3.id, 'alpha')).toBe(false)
+    })
+
+    it('namespace isolation on addMember prevents cross-namespace join', () => {
+        const store = new Store(':memory:')
+        const team = store.teams.createTeam('Alpha Team', 'alpha')
+        const session = store.sessions.getOrCreateSession('s1', { path: '/repo' }, null, 'alpha')
+
+        // Try to add member through wrong namespace
+        const added = store.teams.addMember(team.id, session.id, 'beta')
+        expect(added).toBe(false)
+    })
+
+    it('session delete cascades to team_members', () => {
+        const store = new Store(':memory:')
+        const team = store.teams.createTeam('Cascade Test', 'alpha')
+        const session = store.sessions.getOrCreateSession('s1', { path: '/repo' }, null, 'alpha')
+
+        store.teams.addMember(team.id, session.id, 'alpha')
+        expect(store.teams.getTeamMembers(team.id, 'alpha')).toEqual([session.id])
+
+        store.sessions.deleteSession(session.id, 'alpha')
+        expect(store.teams.getTeamMembers(team.id, 'alpha')).toEqual([])
+    })
+
+    it('team delete cascades to team_members', () => {
+        const store = new Store(':memory:')
+        const team = store.teams.createTeam('Cascade Team', 'alpha')
+        const session = store.sessions.getOrCreateSession('s1', { path: '/repo' }, null, 'alpha')
+
+        store.teams.addMember(team.id, session.id, 'alpha')
+        expect(store.teams.getTeamForSession(session.id, 'alpha')).not.toBeNull()
+
+        store.teams.deleteTeam(team.id, 'alpha')
+        expect(store.teams.getTeamForSession(session.id, 'alpha')).toBeNull()
+    })
+
+    it('updateLastActiveMemberAt updates the timestamp', () => {
+        const store = new Store(':memory:')
+        const team = store.teams.createTeam('Active Team', 'alpha')
+
+        const updated = store.teams.updateLastActiveMemberAt(team.id, 1_000_000)
+        expect(updated).toBe(true)
+
+        const fetched = store.teams.getTeam(team.id, 'alpha')
+        expect(fetched!.lastActiveMemberAt).toBe(1_000_000)
+    })
+
+    it('getExpiredTemporaryTeams returns expired non-persistent teams', () => {
+        const store = new Store(':memory:')
+
+        // Create temp team with 1-second TTL
+        const tempTeam = store.teams.createTeam('Temp', 'alpha', { ttlSeconds: 1 })
+        store.teams.updateLastActiveMemberAt(tempTeam.id, 1_000)
+
+        // Create persistent team
+        const persistentTeam = store.teams.createTeam('Persistent', 'alpha', { persistent: true })
+        store.teams.updateLastActiveMemberAt(persistentTeam.id, 1_000)
+
+        // At time 3000, temp team is expired (3000 - 1000 = 2000 > 1 * 1000)
+        const expired = store.teams.getExpiredTemporaryTeams(3_000)
+        expect(expired).toHaveLength(1)
+        expect(expired[0]!.id).toBe(tempTeam.id)
+    })
+
+    it('creates persistent team', () => {
+        const store = new Store(':memory:')
+        const team = store.teams.createTeam('Persistent Team', 'alpha', { persistent: true })
+
+        expect(team.persistent).toBe(true)
+        expect(team.ttlSeconds).toBe(3600)
+    })
+
+    it('UserPreferencesStore.update sets teamGroupStyle correctly', () => {
+        const store = new Store(':memory:')
+        store.userPreferences.update('default', { teamGroupStyle: 'left-border' })
+        const prefs = store.userPreferences.get('default')
+        expect(prefs.teamGroupStyle).toBe('left-border')
+        expect(prefs.readyAnnouncements).toBe(true)
     })
 })

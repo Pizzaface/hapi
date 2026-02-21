@@ -8,6 +8,7 @@ import { MessageStore } from './messageStore'
 import { PushStore } from './pushStore'
 import { SessionStore } from './sessionStore'
 import { SessionBeadStore } from './sessionBeadStore'
+import { TeamStore } from './teamStore'
 import { UserStore } from './userStore'
 import { UserPreferencesStore } from './userPreferencesStore'
 
@@ -18,6 +19,7 @@ export type {
     StoredPushSubscription,
     StoredSession,
     StoredSessionBead,
+    StoredTeam,
     StoredUser,
     VersionedUpdateResult
 } from './types'
@@ -26,9 +28,10 @@ export { MessageStore } from './messageStore'
 export { PushStore } from './pushStore'
 export { SessionStore } from './sessionStore'
 export { SessionBeadStore } from './sessionBeadStore'
+export { TeamStore } from './teamStore'
 export { UserStore } from './userStore'
 
-const SCHEMA_VERSION: number = 8
+const SCHEMA_VERSION: number = 9
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -37,7 +40,10 @@ const REQUIRED_TABLES = [
     'push_subscriptions',
     'user_preferences',
     'session_beads',
-    'bead_snapshots'
+    'bead_snapshots',
+    'teams',
+    'team_members',
+    'group_sort_orders'
 ] as const
 
 export class Store {
@@ -51,6 +57,7 @@ export class Store {
     readonly push: PushStore
     readonly userPreferences: UserPreferencesStore
     readonly sessionBeads: SessionBeadStore
+    readonly teams: TeamStore
 
     constructor(dbPath: string) {
         this.dbPath = dbPath
@@ -94,6 +101,7 @@ export class Store {
         this.push = new PushStore(this.db)
         this.userPreferences = new UserPreferencesStore(this.db)
         this.sessionBeads = new SessionBeadStore(this.db)
+        this.teams = new TeamStore(this.db)
     }
 
     transaction<T>(fn: () => T): T {
@@ -107,11 +115,13 @@ export class Store {
             if (this.hasAnyUserTables()) {
                 this.migrateLegacySchemaIfNeeded()
                 this.createSchema()
+                this.seedAlwaysOnTeam()
                 this.setUserVersion(SCHEMA_VERSION)
                 return
             }
 
             this.createSchema()
+            this.seedAlwaysOnTeam()
             this.setUserVersion(SCHEMA_VERSION)
             return
         }
@@ -160,6 +170,12 @@ export class Store {
             this.setUserVersion(version)
         }
 
+        if (version < 9) {
+            this.migrateFromV8ToV9()
+            version = 9
+            this.setUserVersion(version)
+        }
+
         if (version !== SCHEMA_VERSION) {
             throw this.buildSchemaMismatchError(version)
         }
@@ -186,7 +202,8 @@ export class Store {
                 active_at INTEGER,
                 seq INTEGER DEFAULT 0,
                 sort_order TEXT,
-                parent_session_id TEXT
+                parent_session_id TEXT,
+                accept_all_messages INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_sessions_tag ON sessions(tag);
             CREATE INDEX IF NOT EXISTS idx_sessions_tag_namespace ON sessions(tag, namespace);
@@ -247,6 +264,7 @@ export class Store {
                 ready_announcements INTEGER NOT NULL DEFAULT 1,
                 permission_notifications INTEGER NOT NULL DEFAULT 1,
                 error_notifications INTEGER NOT NULL DEFAULT 1,
+                team_group_style TEXT NOT NULL DEFAULT 'card',
                 updated_at INTEGER NOT NULL
             );
 
@@ -267,7 +285,49 @@ export class Store {
                 PRIMARY KEY (session_id, bead_id)
             );
             CREATE INDEX IF NOT EXISTS idx_bead_snapshots_session_id ON bead_snapshots(session_id);
+
+            CREATE TABLE IF NOT EXISTS teams (
+                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))),
+                name TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                color TEXT,
+                persistent INTEGER NOT NULL DEFAULT 0,
+                ttl_seconds INTEGER NOT NULL DEFAULT 3600,
+                sort_order TEXT,
+                last_active_member_at INTEGER,
+                created_by TEXT,
+                created_at INTEGER NOT NULL,
+                UNIQUE(namespace, name)
+            );
+            CREATE INDEX IF NOT EXISTS idx_teams_namespace ON teams(namespace);
+
+            CREATE TABLE IF NOT EXISTS team_members (
+                team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                joined_at INTEGER NOT NULL,
+                PRIMARY KEY (team_id, session_id),
+                UNIQUE(session_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_team_members_session ON team_members(session_id);
+
+            CREATE TABLE IF NOT EXISTS group_sort_orders (
+                group_key TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                sort_order TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (namespace, group_key)
+            );
         `)
+    }
+
+    private seedAlwaysOnTeam(): void {
+        const existing = this.db.prepare("SELECT id FROM teams WHERE id = 'always-on'").get()
+        if (!existing) {
+            this.db.prepare(`
+                INSERT INTO teams (id, name, namespace, color, persistent, ttl_seconds, created_at)
+                VALUES ('always-on', 'Always On', 'default', '#10B981', 1, 0, @created_at)
+            `).run({ created_at: Date.now() })
+        }
     }
 
     private migrateLegacySchemaIfNeeded(): void {
@@ -452,6 +512,75 @@ export class Store {
             this.db.exec('ROLLBACK')
             const message = error instanceof Error ? error.message : String(error)
             throw new Error(`SQLite schema migration v7->v8 failed: ${message}`)
+        }
+    }
+
+    private migrateFromV8ToV9(): void {
+        const sessionColumns = this.getSessionColumnNames()
+        const userPrefColumns = this.getUserPreferencesColumnNames()
+
+        try {
+            this.db.exec('BEGIN')
+
+            // Add accept_all_messages to sessions
+            if (!sessionColumns.has('accept_all_messages')) {
+                this.db.exec('ALTER TABLE sessions ADD COLUMN accept_all_messages INTEGER NOT NULL DEFAULT 0')
+            }
+
+            // Add team_group_style to user_preferences
+            if (!userPrefColumns.has('team_group_style')) {
+                this.db.exec("ALTER TABLE user_preferences ADD COLUMN team_group_style TEXT NOT NULL DEFAULT 'card'")
+            }
+
+            // Create teams table
+            this.db.exec(`
+                CREATE TABLE IF NOT EXISTS teams (
+                    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))),
+                    name TEXT NOT NULL,
+                    namespace TEXT NOT NULL DEFAULT 'default',
+                    color TEXT,
+                    persistent INTEGER NOT NULL DEFAULT 0,
+                    ttl_seconds INTEGER NOT NULL DEFAULT 3600,
+                    sort_order TEXT,
+                    last_active_member_at INTEGER,
+                    created_by TEXT,
+                    created_at INTEGER NOT NULL,
+                    UNIQUE(namespace, name)
+                );
+                CREATE INDEX IF NOT EXISTS idx_teams_namespace ON teams(namespace);
+            `)
+
+            // Create team_members table
+            this.db.exec(`
+                CREATE TABLE IF NOT EXISTS team_members (
+                    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                    joined_at INTEGER NOT NULL,
+                    PRIMARY KEY (team_id, session_id),
+                    UNIQUE(session_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_team_members_session ON team_members(session_id);
+            `)
+
+            // Create group_sort_orders table
+            this.db.exec(`
+                CREATE TABLE IF NOT EXISTS group_sort_orders (
+                    group_key TEXT NOT NULL,
+                    namespace TEXT NOT NULL DEFAULT 'default',
+                    sort_order TEXT NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (namespace, group_key)
+                );
+            `)
+
+            this.db.exec('COMMIT')
+
+            // Seed outside of the migration transaction (seedAlwaysOnTeam has its own queries)
+            this.seedAlwaysOnTeam()
+        } catch (error) {
+            this.db.exec('ROLLBACK')
+            const message = error instanceof Error ? error.message : String(error)
+            throw new Error(`SQLite schema migration v8->v9 failed: ${message}`)
         }
     }
 
