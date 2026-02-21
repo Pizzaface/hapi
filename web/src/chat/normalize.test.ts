@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeDecryptedMessage } from '@/chat/normalize'
+import { normalizeDecryptedMessage, isPermissionPromptMessage } from '@/chat/normalize'
 import { normalizeAgentRecord } from '@/chat/normalizeAgent'
 import { normalizeUserRecord } from '@/chat/normalizeUser'
 import type { DecryptedMessage } from '@/types/api'
@@ -551,5 +551,125 @@ describe('normalizeUserRecord', () => {
             isSidechain: false,
             meta: { source: 'upload' }
         })
+    })
+})
+
+describe('isPermissionPromptMessage', () => {
+    it('returns true when message contains a tool-call matching a pending request ID', () => {
+        const message = makeMessage({
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: {
+                    type: 'assistant',
+                    uuid: 'uuid-1',
+                    message: {
+                        content: [
+                            { type: 'text', text: 'Let me run this command' },
+                            { type: 'tool_use', id: 'tool-call-abc', name: 'Bash', input: { command: 'ls' } }
+                        ]
+                    }
+                }
+            }
+        })
+        const pendingIds = new Set(['tool-call-abc'])
+        expect(isPermissionPromptMessage(message, pendingIds)).toBe(true)
+    })
+
+    it('returns false when no tool-call ID matches pending request IDs', () => {
+        const message = makeMessage({
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: {
+                    type: 'assistant',
+                    uuid: 'uuid-2',
+                    message: {
+                        content: [
+                            { type: 'tool_use', id: 'tool-call-xyz', name: 'Read', input: {} }
+                        ]
+                    }
+                }
+            }
+        })
+        const pendingIds = new Set(['tool-call-abc'])
+        expect(isPermissionPromptMessage(message, pendingIds)).toBe(false)
+    })
+
+    it('returns false for empty pending request IDs set', () => {
+        const message = makeMessage({
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: {
+                    type: 'assistant',
+                    uuid: 'uuid-3',
+                    message: {
+                        content: [
+                            { type: 'tool_use', id: 'tool-call-abc', name: 'Bash', input: {} }
+                        ]
+                    }
+                }
+            }
+        })
+        expect(isPermissionPromptMessage(message, new Set())).toBe(false)
+    })
+
+    it('returns false for user messages', () => {
+        const message = makeMessage({
+            role: 'user',
+            content: 'hello'
+        })
+        const pendingIds = new Set(['some-id'])
+        expect(isPermissionPromptMessage(message, pendingIds)).toBe(false)
+    })
+
+    it('returns false for messages that normalize to null', () => {
+        const message = makeMessage({
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: {
+                    type: 'assistant',
+                    isMeta: true,
+                    message: { content: 'ignored' }
+                }
+            }
+        })
+        const pendingIds = new Set(['some-id'])
+        expect(isPermissionPromptMessage(message, pendingIds)).toBe(false)
+    })
+
+    it('returns true when one of multiple tool-calls matches', () => {
+        const message = makeMessage({
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: {
+                    type: 'assistant',
+                    uuid: 'uuid-4',
+                    message: {
+                        content: [
+                            { type: 'tool_use', id: 'tool-call-1', name: 'Read', input: {} },
+                            { type: 'tool_use', id: 'tool-call-2', name: 'Bash', input: { command: 'rm -rf' } }
+                        ]
+                    }
+                }
+            }
+        })
+        const pendingIds = new Set(['tool-call-2'])
+        expect(isPermissionPromptMessage(message, pendingIds)).toBe(true)
+    })
+
+    it('returns false for event messages even if they contain matching text', () => {
+        const message = makeMessage({
+            role: 'agent',
+            content: {
+                type: 'event',
+                data: { type: 'ready' }
+            }
+        })
+        const pendingIds = new Set(['ready'])
+        expect(isPermissionPromptMessage(message, pendingIds)).toBe(false)
     })
 })

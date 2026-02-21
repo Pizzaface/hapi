@@ -6,6 +6,7 @@ import type { AttachmentMetadata, DecryptedMessage, ModelMode, PermissionMode, S
 import type { ChatBlock, NormalizedMessage } from '@/chat/types'
 import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
+import { setPendingPermissionRequestIds } from '@/lib/message-window-store'
 import { reduceChatBlocks } from '@/chat/reducer'
 import { reconcileChatBlocks } from '@/chat/reconcile'
 import { HappyComposer } from '@/components/AssistantChat/HappyComposer'
@@ -39,6 +40,7 @@ export function SessionChat(props: {
     isSending: boolean
     pendingCount: number
     messagesVersion: number
+    hasPendingPermissionPrompt: boolean
     onBack: () => void
     onRefresh: () => void
     onLoadMore: () => Promise<unknown>
@@ -144,6 +146,25 @@ export function SessionChat(props: {
 
         prevRequestIdsRef.current = currentIds
     }, [props.session.agentState?.requests, props.session.id])
+
+    // Propagate pending permission request IDs to the message window store
+    // so it can detect permission prompts in the pending queue.
+    useEffect(() => {
+        const requests = props.session.agentState?.requests ?? {}
+        const ids = new Set(Object.keys(requests))
+        setPendingPermissionRequestIds(props.session.id, ids)
+        return () => {
+            setPendingPermissionRequestIds(props.session.id, new Set())
+        }
+    }, [props.session.agentState?.requests, props.session.id])
+
+    // Auto-flush and scroll to bottom when a permission prompt is detected in the pending queue.
+    useEffect(() => {
+        if (props.hasPendingPermissionPrompt) {
+            props.onFlushPending()
+            setForceScrollToken((t) => t + 1)
+        }
+    }, [props.hasPendingPermissionPrompt, props.onFlushPending])
 
     const handleVoiceToggle = useCallback(async () => {
         if (!voice) return
@@ -388,6 +409,7 @@ export function SessionChat(props: {
                                 normalizedMessagesCount={normalizedMessages.length}
                                 messagesVersion={props.messagesVersion}
                                 forceScrollToken={forceScrollToken}
+                                hasPendingPermissionPrompt={props.hasPendingPermissionPrompt}
                             />
 
                             <HappyComposer

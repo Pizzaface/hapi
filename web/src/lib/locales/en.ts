@@ -286,6 +286,7 @@ export default {
   'misc.loading': 'Loading…',
   'misc.loadOlder': 'Load older',
   'misc.newMessage': '{n} new message{s}',
+  'misc.permissionPromptWaiting': 'Permission prompt waiting',
   'misc.loadingMessages': 'Loading messages…',
   'misc.typeMessage': "Type 'continue' to resume...",
   'misc.typeAMessage': 'Type a message...',

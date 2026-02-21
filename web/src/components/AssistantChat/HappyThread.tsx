@@ -10,10 +10,22 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/Spinner'
 import { useTranslation } from '@/lib/use-translation'
 
-function NewMessagesIndicator(props: { count: number; onClick: () => void }) {
+function NewMessagesIndicator(props: { count: number; urgent: boolean; onClick: () => void }) {
     const { t } = useTranslation()
-    if (props.count === 0) {
+    if (props.count === 0 && !props.urgent) {
         return null
+    }
+
+    if (props.urgent) {
+        return (
+            <button
+                onClick={props.onClick}
+                className="absolute bottom-20 left-1/2 -translate-x-1/2 bg-amber-500 text-white px-3 py-1.5 rounded-full text-sm font-medium shadow-lg animate-pulse z-10"
+                aria-live="assertive"
+            >
+                {t('misc.permissionPromptWaiting')} &#8595;
+            </button>
+        )
     }
 
     return (
@@ -74,6 +86,7 @@ export function HappyThread(props: {
     normalizedMessagesCount: number
     messagesVersion: number
     forceScrollToken: number
+    hasPendingPermissionPrompt: boolean
 }) {
     const { t } = useTranslation()
     const viewportRef = useRef<HTMLDivElement | null>(null)
@@ -332,7 +345,7 @@ export function HappyThread(props: {
                         </div>
                     </div>
                 </ThreadPrimitive.Viewport>
-                <NewMessagesIndicator count={props.pendingCount} onClick={scrollToBottom} />
+                <NewMessagesIndicator count={props.pendingCount} urgent={props.hasPendingPermissionPrompt} onClick={scrollToBottom} />
             </ThreadPrimitive.Root>
         </HappyChatProvider>
     )

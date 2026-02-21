@@ -421,6 +421,7 @@ function SessionPage() {
         refetch: refetchMessages,
         pendingCount,
         messagesVersion,
+        hasPendingPermissionPrompt,
         flushPending,
         setAtBottom,
     } = useMessages(api, sessionId)
@@ -565,6 +566,7 @@ function SessionPage() {
             isSending={isSending}
             pendingCount={pendingCount}
             messagesVersion={messagesVersion}
+            hasPendingPermissionPrompt={hasPendingPermissionPrompt}
             onBack={goBack}
             onRefresh={refreshSelectedSession}
             onLoadMore={loadMoreMessages}
