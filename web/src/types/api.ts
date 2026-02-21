@@ -215,16 +215,20 @@ export type VisibilityPayload = {
     visibility: 'visible' | 'hidden'
 }
 
+export type TeamGroupStyle = 'card' | 'left-border'
+
 export type PreferencesResponse = {
     readyAnnouncements: boolean
     permissionNotifications: boolean
     errorNotifications: boolean
+    teamGroupStyle: TeamGroupStyle
 }
 
 export type UpdatePreferencesPayload = {
     readyAnnouncements?: boolean
     permissionNotifications?: boolean
     errorNotifications?: boolean
+    teamGroupStyle?: TeamGroupStyle
 }
 
 export type UpdatePreferencesResponse = {

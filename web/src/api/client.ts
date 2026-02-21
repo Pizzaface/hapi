@@ -193,6 +193,26 @@ export class ApiClient {
         return await this.request<TeamsResponse>('/api/teams')
     }
 
+    async createTeam(name: string, opts?: { color?: string; persistent?: boolean }): Promise<{ team: { id: string; name: string; color: string | null } }> {
+        return await this.request('/api/teams', {
+            method: 'POST',
+            body: JSON.stringify({ name, ...opts })
+        })
+    }
+
+    async updateTeam(teamId: string, fields: { name?: string; color?: string | null }): Promise<void> {
+        await this.request(`/api/teams/${encodeURIComponent(teamId)}`, {
+            method: 'PATCH',
+            body: JSON.stringify(fields)
+        })
+    }
+
+    async deleteTeam(teamId: string): Promise<void> {
+        await this.request(`/api/teams/${encodeURIComponent(teamId)}`, {
+            method: 'DELETE'
+        })
+    }
+
     async clearInactiveSessions(
         olderThan: ClearInactiveSessionsOlderThan = '30d'
     ): Promise<ClearInactiveSessionsResponse> {

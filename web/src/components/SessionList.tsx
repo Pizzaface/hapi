@@ -40,6 +40,13 @@ import { ClearInactiveDialog } from '@/components/ClearInactiveDialog'
 import { SessionActionMenu } from '@/components/SessionActionMenu'
 import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
 import { clearMessageWindow } from '@/lib/message-window-store'
 import { deriveSessionStatus, deriveTeamAggregateStatus } from '@hapi/protocol'
 import { resolveProvider } from '@/lib/providerTheme'
@@ -1177,28 +1184,73 @@ function flattenTree(
     return result
 }
 
+const TEAM_COLORS = [
+    '#3b82f6', '#8b5cf6', '#ec4899', '#ef4444',
+    '#f97316', '#eab308', '#22c55e', '#06b6d4',
+]
+
 function TeamGroupHeader(props: {
     group: TeamGroup
     isCollapsed: boolean
     onToggle: () => void
     onSpawn?: () => void
+    onRename?: () => void
+    onChangeColor?: () => void
+    onDelete?: () => void
     unreadCount: number
+    style?: TeamGroupStyleProp
     t: (key: string, params?: Record<string, string | number>) => string
 }) {
-    const { group, isCollapsed, onToggle, onSpawn, unreadCount, t } = props
+    const { group, isCollapsed, onToggle, onSpawn, onRename, onChangeColor, onDelete, unreadCount, style = 'card', t } = props
+    const { isTouch } = usePlatform()
     const aggregateStatus = deriveTeamAggregateStatus(group.sessions)
     const statusDisplay = getTeamAggregateStatusDisplay(aggregateStatus)
     const borderColor = group.teamColor ?? 'var(--app-link)'
+    const [menuOpen, setMenuOpen] = useState(false)
+    const [menuAnchorPoint, setMenuAnchorPoint] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+    const menuRef = useRef<HTMLDivElement>(null)
+
+    const longPressHandlers = useLongPress({
+        onLongPress: (point) => {
+            setMenuAnchorPoint(point)
+            setMenuOpen(true)
+        },
+        onClick: onToggle,
+        threshold: 500,
+        disabled: false,
+    })
+
+    useEffect(() => {
+        if (!menuOpen) return
+        const handleClickOutside = (e: MouseEvent) => {
+            if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+                setMenuOpen(false)
+            }
+        }
+        document.addEventListener('mousedown', handleClickOutside)
+        return () => document.removeEventListener('mousedown', handleClickOutside)
+    }, [menuOpen])
+
+    const handleContextMenu = (e: React.MouseEvent) => {
+        e.preventDefault()
+        setMenuAnchorPoint({ x: e.clientX, y: e.clientY })
+        setMenuOpen(true)
+    }
+
+    const headerStyle = style === 'card'
+        ? { borderWidth: '1px', borderColor: borderColor, borderRadius: '0.5rem', margin: '0.5rem 0.75rem 0 0.75rem' }
+        : { borderLeftWidth: '3px', borderLeftColor: borderColor }
 
     return (
         <div
             data-group-header={group.teamName}
-            className="sticky top-0 z-10 flex items-center gap-1 border-b border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-3 py-2"
-            style={{ borderLeftWidth: '3px', borderLeftColor: borderColor }}
+            className={`sticky top-0 z-10 flex items-center gap-1 border-b border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-3 py-2 ${style === 'card' ? 'rounded-t-lg' : ''}`}
+            style={headerStyle}
+            onContextMenu={!isTouch ? handleContextMenu : undefined}
         >
             <button
                 type="button"
-                onClick={onToggle}
+                {...(isTouch ? longPressHandlers : { onClick: onToggle })}
                 className="flex min-w-0 flex-1 items-center gap-2 text-left transition-colors hover:bg-[var(--app-secondary-bg)]"
                 aria-expanded={!isCollapsed}
             >
@@ -1227,6 +1279,19 @@ function TeamGroupHeader(props: {
                     </div>
                 </div>
             </button>
+            <button
+                type="button"
+                onClick={(e) => {
+                    e.stopPropagation()
+                    const rect = e.currentTarget.getBoundingClientRect()
+                    setMenuAnchorPoint({ x: rect.left, y: rect.bottom })
+                    setMenuOpen(true)
+                }}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[var(--app-hint)] hover:text-[var(--app-fg)] transition-colors hover:bg-[var(--app-secondary-bg)]"
+                aria-label={t('session.more')}
+            >
+                <MoreVerticalIcon className="h-4 w-4" />
+            </button>
             {onSpawn ? (
                 <button
                     type="button"
@@ -1238,9 +1303,293 @@ function TeamGroupHeader(props: {
                     <PlusIcon className="h-4 w-4" />
                 </button>
             ) : null}
+
+            {menuOpen ? (
+                <div
+                    ref={menuRef}
+                    className="fixed z-50 min-w-[160px] rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] shadow-lg overflow-hidden"
+                    style={{ top: menuAnchorPoint.y, left: menuAnchorPoint.x }}
+                >
+                    {onRename ? (
+                        <button
+                            type="button"
+                            onClick={() => { setMenuOpen(false); onRename() }}
+                            className="flex w-full items-center px-3 py-2 text-sm text-left text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)]"
+                        >
+                            {t('team.menu.rename')}
+                        </button>
+                    ) : null}
+                    {onChangeColor ? (
+                        <button
+                            type="button"
+                            onClick={() => { setMenuOpen(false); onChangeColor() }}
+                            className="flex w-full items-center px-3 py-2 text-sm text-left text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)]"
+                        >
+                            {t('team.menu.changeColor')}
+                        </button>
+                    ) : null}
+                    {onDelete ? (
+                        <button
+                            type="button"
+                            onClick={() => { setMenuOpen(false); onDelete() }}
+                            className="flex w-full items-center px-3 py-2 text-sm text-left text-red-500 hover:bg-[var(--app-subtle-bg)]"
+                        >
+                            {t('team.menu.delete')}
+                        </button>
+                    ) : null}
+                </div>
+            ) : null}
         </div>
     )
 }
+
+function CreateTeamForm(props: {
+    api: ApiClient | null
+    onCreated: () => void
+    onCancel: () => void
+    t: (key: string, params?: Record<string, string | number>) => string
+}) {
+    const { api, onCreated, onCancel, t } = props
+    const [name, setName] = useState('')
+    const [color, setColor] = useState<string>(TEAM_COLORS[0])
+    const [isPending, setIsPending] = useState(false)
+    const [error, setError] = useState<string | null>(null)
+    const inputRef = useRef<HTMLInputElement>(null)
+    const queryClient = useQueryClient()
+
+    useEffect(() => {
+        inputRef.current?.focus()
+    }, [])
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault()
+        const trimmed = name.trim()
+        if (!trimmed || !api) return
+        setIsPending(true)
+        setError(null)
+        try {
+            await api.createTeam(trimmed, { color, persistent: true })
+            void queryClient.invalidateQueries({ queryKey: queryKeys.teams })
+            onCreated()
+        } catch {
+            setError(t('team.create.error'))
+        } finally {
+            setIsPending(false)
+        }
+    }
+
+    return (
+        <form onSubmit={handleSubmit} className="flex flex-col gap-2 border-b border-[var(--app-divider)] px-3 py-2 bg-[var(--app-subtle-bg)]">
+            <div className="flex items-center gap-2">
+                <input
+                    ref={inputRef}
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Escape') onCancel() }}
+                    placeholder={t('team.create.placeholder')}
+                    className="flex-1 min-w-0 px-2 py-1.5 rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-sm text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-1 focus:ring-[var(--app-link)]"
+                    disabled={isPending}
+                    maxLength={255}
+                />
+                <button
+                    type="submit"
+                    disabled={isPending || !name.trim() || !api}
+                    className="rounded bg-[var(--app-link)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                >
+                    {isPending ? t('team.create.creating') : t('team.create.submit')}
+                </button>
+                <button
+                    type="button"
+                    onClick={onCancel}
+                    disabled={isPending}
+                    className="rounded border border-[var(--app-border)] px-2 py-1.5 text-xs text-[var(--app-hint)]"
+                >
+                    {t('button.cancel')}
+                </button>
+            </div>
+            <div className="flex items-center gap-1.5">
+                {TEAM_COLORS.map((c) => (
+                    <button
+                        key={c}
+                        type="button"
+                        onClick={() => setColor(c)}
+                        className={`h-5 w-5 rounded-full border-2 transition-all ${color === c ? 'border-[var(--app-fg)] scale-110' : 'border-transparent'}`}
+                        style={{ backgroundColor: c }}
+                        aria-label={c}
+                    />
+                ))}
+            </div>
+            {error ? (
+                <div className="text-xs text-red-500">{error}</div>
+            ) : null}
+        </form>
+    )
+}
+
+function RenameTeamDialog(props: {
+    isOpen: boolean
+    onClose: () => void
+    currentName: string
+    api: ApiClient | null
+    teamId: string
+}) {
+    const { t } = useTranslation()
+    const { isOpen, onClose, currentName, api, teamId } = props
+    const [name, setName] = useState(currentName)
+    const [error, setError] = useState<string | null>(null)
+    const [isPending, setIsPending] = useState(false)
+    const inputRef = useRef<HTMLInputElement>(null)
+    const queryClient = useQueryClient()
+
+    useEffect(() => {
+        if (isOpen) {
+            setName(currentName)
+            setError(null)
+            setTimeout(() => {
+                inputRef.current?.focus()
+                inputRef.current?.select()
+            }, 100)
+        }
+    }, [isOpen, currentName])
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault()
+        const trimmed = name.trim()
+        if (!trimmed || trimmed === currentName || !api) {
+            onClose()
+            return
+        }
+        setIsPending(true)
+        setError(null)
+        try {
+            await api.updateTeam(teamId, { name: trimmed })
+            void queryClient.invalidateQueries({ queryKey: queryKeys.teams })
+            onClose()
+        } catch {
+            setError(t('team.rename.error'))
+        } finally {
+            setIsPending(false)
+        }
+    }
+
+    return (
+        <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+            <DialogContent className="max-w-sm">
+                <DialogHeader>
+                    <DialogTitle>{t('team.rename.title')}</DialogTitle>
+                </DialogHeader>
+                <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-4">
+                    <input
+                        ref={inputRef}
+                        type="text"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Escape') onClose() }}
+                        placeholder={t('team.rename.placeholder')}
+                        className="w-full px-3 py-2.5 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--app-button)] focus:border-transparent"
+                        disabled={isPending}
+                        maxLength={255}
+                    />
+                    {error ? (
+                        <div className="rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
+                            {error}
+                        </div>
+                    ) : null}
+                    <div className="flex gap-2 justify-end">
+                        <Button type="button" variant="secondary" onClick={onClose} disabled={isPending}>
+                            {t('button.cancel')}
+                        </Button>
+                        <Button type="submit" disabled={isPending || !name.trim()}>
+                            {isPending ? t('dialog.rename.saving') : t('button.save')}
+                        </Button>
+                    </div>
+                </form>
+            </DialogContent>
+        </Dialog>
+    )
+}
+
+function ChangeTeamColorDialog(props: {
+    isOpen: boolean
+    onClose: () => void
+    currentColor: string | null
+    api: ApiClient | null
+    teamId: string
+}) {
+    const { t } = useTranslation()
+    const { isOpen, onClose, currentColor, api, teamId } = props
+    const [color, setColor] = useState<string | null>(currentColor)
+    const [isPending, setIsPending] = useState(false)
+    const [error, setError] = useState<string | null>(null)
+    const queryClient = useQueryClient()
+
+    useEffect(() => {
+        if (isOpen) {
+            setColor(currentColor)
+            setError(null)
+        }
+    }, [isOpen, currentColor])
+
+    const handleSave = async () => {
+        if (!api) return
+        setIsPending(true)
+        setError(null)
+        try {
+            await api.updateTeam(teamId, { color })
+            void queryClient.invalidateQueries({ queryKey: queryKeys.teams })
+            onClose()
+        } catch {
+            setError(t('team.color.error'))
+        } finally {
+            setIsPending(false)
+        }
+    }
+
+    return (
+        <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+            <DialogContent className="max-w-xs">
+                <DialogHeader>
+                    <DialogTitle>{t('team.color.title')}</DialogTitle>
+                </DialogHeader>
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <button
+                        type="button"
+                        onClick={() => setColor(null)}
+                        className={`h-7 w-7 rounded-full border-2 transition-all flex items-center justify-center ${color === null ? 'border-[var(--app-fg)] scale-110' : 'border-[var(--app-border)]'}`}
+                        style={{ backgroundColor: 'var(--app-subtle-bg)' }}
+                        title={t('team.color.noColor')}
+                    >
+                        <span className="text-xs text-[var(--app-hint)]">—</span>
+                    </button>
+                    {TEAM_COLORS.map((c) => (
+                        <button
+                            key={c}
+                            type="button"
+                            onClick={() => setColor(c)}
+                            className={`h-7 w-7 rounded-full border-2 transition-all ${color === c ? 'border-[var(--app-fg)] scale-110' : 'border-transparent'}`}
+                            style={{ backgroundColor: c }}
+                            aria-label={c}
+                        />
+                    ))}
+                </div>
+                {error ? (
+                    <div className="mt-2 text-xs text-red-500">{error}</div>
+                ) : null}
+                <div className="mt-4 flex gap-2 justify-end">
+                    <Button type="button" variant="secondary" onClick={onClose} disabled={isPending}>
+                        {t('button.cancel')}
+                    </Button>
+                    <Button type="button" onClick={handleSave} disabled={isPending}>
+                        {isPending ? t('dialog.rename.saving') : t('button.save')}
+                    </Button>
+                </div>
+            </DialogContent>
+        </Dialog>
+    )
+}
+
+export type TeamGroupStyleProp = 'card' | 'left-border'
 
 export function SessionList(props: {
     sessions: SessionSummary[]
@@ -1255,6 +1604,7 @@ export function SessionList(props: {
     selectedSessionId?: string | null
     scrollContainerRef?: RefObject<HTMLElement | null>
     machineNames?: Map<string, string>
+    teamGroupStyle?: TeamGroupStyleProp
 }) {
     const { t } = useTranslation()
     const { isTouch } = usePlatform()
@@ -1267,6 +1617,13 @@ export function SessionList(props: {
     const [clearInactiveOpen, setClearInactiveOpen] = useState(false)
     const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null)
     const [isBulkDeleting, setIsBulkDeleting] = useState(false)
+
+    // Team management state
+    const [showCreateTeam, setShowCreateTeam] = useState(false)
+    const [renameTeamGroup, setRenameTeamGroup] = useState<TeamGroup | null>(null)
+    const [colorTeamGroup, setColorTeamGroup] = useState<TeamGroup | null>(null)
+    const [deleteTeamGroup, setDeleteTeamGroup] = useState<TeamGroup | null>(null)
+    const [isTeamDeletePending, setIsTeamDeletePending] = useState(false)
 
     const [readHistory, setReadHistory] = useState<SessionReadHistory>(() => loadSessionReadHistory())
 
@@ -1534,6 +1891,20 @@ export function SessionList(props: {
         setSelectedSessionIds(new Set())
     }, [api, queryClient, selectedSessions, t])
 
+    const handleDeleteTeam = useCallback(async () => {
+        if (!api || !deleteTeamGroup) return
+        setIsTeamDeletePending(true)
+        try {
+            await api.deleteTeam(deleteTeamGroup.teamId)
+            void queryClient.invalidateQueries({ queryKey: queryKeys.teams })
+            setDeleteTeamGroup(null)
+        } catch {
+            throw new Error(t('dialog.error.default'))
+        } finally {
+            setIsTeamDeletePending(false)
+        }
+    }, [api, deleteTeamGroup, queryClient, t])
+
     const handleClearInactive = useCallback(async (olderThan: ClearInactiveSessionsOlderThan) => {
         const result = await clearInactiveSessions(olderThan)
         if (result.failed.length > 0) {
@@ -1652,6 +2023,14 @@ export function SessionList(props: {
                     <div className="ml-auto flex items-center gap-2">
                         <button
                             type="button"
+                            onClick={() => setShowCreateTeam(true)}
+                            disabled={!api}
+                            className="rounded border border-[var(--app-border)] px-2 py-1 text-xs text-[var(--app-link)] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            {t('team.create')}
+                        </button>
+                        <button
+                            type="button"
                             onClick={() => setClearInactiveOpen(true)}
                             disabled={!hasInactiveSessions || !api || isClearInactivePending}
                             className="rounded border border-[var(--app-border)] px-2 py-1 text-xs text-[var(--app-hint)] disabled:cursor-not-allowed disabled:opacity-50"
@@ -1675,6 +2054,15 @@ export function SessionList(props: {
                 </div>
             ) : null}
 
+            {showCreateTeam ? (
+                <CreateTeamForm
+                    api={api}
+                    onCreated={() => setShowCreateTeam(false)}
+                    onCancel={() => setShowCreateTeam(false)}
+                    t={t}
+                />
+            ) : null}
+
             <div ref={listContainerRef} className="flex flex-col">
                 <p id={dragInstructionsId} className="sr-only">
                     {t('session.dragHandle.instructions')}
@@ -1687,13 +2075,22 @@ export function SessionList(props: {
                         const { roots, childrenOf } = buildParentChildTree(group.sessions)
                         const flatItems = flattenTree(roots, childrenOf, sessionTitleMap, isTouch)
 
+                        const teamStyle = props.teamGroupStyle ?? 'card'
+                        const teamContainerClass = teamStyle === 'card'
+                            ? 'group/team mx-3 mt-2 rounded-lg overflow-hidden border border-[var(--app-divider)]'
+                            : 'group/team'
+
                         return (
-                            <div key={group.key} className="group/team">
+                            <div key={group.key} className={teamContainerClass} style={teamStyle === 'card' ? { borderColor: group.teamColor ?? 'var(--app-divider)' } : undefined}>
                                 <TeamGroupHeader
                                     group={group}
                                     isCollapsed={isCollapsed}
                                     onToggle={() => toggleGroup(group.key, isCollapsed)}
+                                    onRename={api ? () => setRenameTeamGroup(group) : undefined}
+                                    onChangeColor={api ? () => setColorTeamGroup(group) : undefined}
+                                    onDelete={api ? () => setDeleteTeamGroup(group) : undefined}
                                     unreadCount={groupUnreadCount}
+                                    style={teamStyle}
                                     t={t}
                                 />
                                 {!isCollapsed ? (
@@ -1864,6 +2261,34 @@ export function SessionList(props: {
                 confirmingLabel={t('dialog.delete.selected.confirming')}
                 onConfirm={handleBulkDelete}
                 isPending={isBulkDeleting}
+                destructive
+            />
+
+            <RenameTeamDialog
+                isOpen={renameTeamGroup !== null}
+                onClose={() => setRenameTeamGroup(null)}
+                currentName={renameTeamGroup?.teamName ?? ''}
+                api={api}
+                teamId={renameTeamGroup?.teamId ?? ''}
+            />
+
+            <ChangeTeamColorDialog
+                isOpen={colorTeamGroup !== null}
+                onClose={() => setColorTeamGroup(null)}
+                currentColor={colorTeamGroup?.teamColor ?? null}
+                api={api}
+                teamId={colorTeamGroup?.teamId ?? ''}
+            />
+
+            <ConfirmDialog
+                isOpen={deleteTeamGroup !== null}
+                onClose={() => setDeleteTeamGroup(null)}
+                title={t('team.delete.title')}
+                description={t('team.delete.description', { name: deleteTeamGroup?.teamName ?? '' })}
+                confirmLabel={t('team.delete.confirm')}
+                confirmingLabel={t('team.delete.confirming')}
+                onConfirm={handleDeleteTeam}
+                isPending={isTeamDeletePending}
                 destructive
             />
         </div>

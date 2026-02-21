@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { I18nContext, I18nProvider } from '@/lib/i18n-context'
 import { AppContextProvider } from '@/lib/app-context'
 import { en } from '@/lib/locales'
@@ -57,14 +58,19 @@ function makeApi(overrides?: {
 }
 
 function renderWithProviders(ui: React.ReactElement, api = makeApi()) {
+    const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } }
+    })
     return {
         api,
         ...render(
-            <AppContextProvider value={{ api: api as any, token: 'token', baseUrl: '' }}>
-                <I18nProvider>
-                    {ui}
-                </I18nProvider>
-            </AppContextProvider>
+            <QueryClientProvider client={queryClient}>
+                <AppContextProvider value={{ api: api as any, token: 'token', baseUrl: '' }}>
+                    <I18nProvider>
+                        {ui}
+                    </I18nProvider>
+                </AppContextProvider>
+            </QueryClientProvider>
         )
     }
 }
@@ -73,12 +79,17 @@ function renderWithSpyT(ui: React.ReactElement) {
     const translations = en as Record<string, string>
     const spyT = vi.fn((key: string) => translations[key] ?? key)
     const api = makeApi()
+    const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } }
+    })
     render(
-        <AppContextProvider value={{ api: api as any, token: 'token', baseUrl: '' }}>
-            <I18nContext.Provider value={{ t: spyT, locale: 'en', setLocale: vi.fn() }}>
-                {ui}
-            </I18nContext.Provider>
-        </AppContextProvider>
+        <QueryClientProvider client={queryClient}>
+            <AppContextProvider value={{ api: api as any, token: 'token', baseUrl: '' }}>
+                <I18nContext.Provider value={{ t: spyT, locale: 'en', setLocale: vi.fn() }}>
+                    {ui}
+                </I18nContext.Provider>
+            </AppContextProvider>
+        </QueryClientProvider>
     )
     return spyT
 }

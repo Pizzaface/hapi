@@ -6,7 +6,8 @@ import type { WebAppEnv } from '../middleware/auth'
 const updatePreferencesSchema = z.object({
     readyAnnouncements: z.boolean().optional(),
     permissionNotifications: z.boolean().optional(),
-    errorNotifications: z.boolean().optional()
+    errorNotifications: z.boolean().optional(),
+    teamGroupStyle: z.enum(['card', 'left-border']).optional()
 })
 
 export function createPreferencesRoutes(store: Store): Hono<WebAppEnv> {
@@ -18,7 +19,8 @@ export function createPreferencesRoutes(store: Store): Hono<WebAppEnv> {
         return c.json({
             readyAnnouncements: preferences.readyAnnouncements,
             permissionNotifications: preferences.permissionNotifications,
-            errorNotifications: preferences.errorNotifications
+            errorNotifications: preferences.errorNotifications,
+            teamGroupStyle: preferences.teamGroupStyle
         })
     })
 
@@ -37,7 +39,8 @@ export function createPreferencesRoutes(store: Store): Hono<WebAppEnv> {
             preferences: {
                 readyAnnouncements: saved.readyAnnouncements,
                 permissionNotifications: saved.permissionNotifications,
-                errorNotifications: saved.errorNotifications
+                errorNotifications: saved.errorNotifications,
+                teamGroupStyle: saved.teamGroupStyle
             }
         })
     })

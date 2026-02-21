@@ -1,7 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import type { TeamGroupStyle } from '@/types/api'
 import { useTranslation, type Locale } from '@/lib/use-translation'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { useAppContext } from '@/lib/app-context'
+import { queryKeys } from '@/lib/query-keys'
 import { getElevenLabsSupportedLanguages, getLanguageDisplayName, type Language } from '@/lib/languages'
 import { getFontScaleOptions, useFontScale, type FontScale } from '@/hooks/useFontScale'
 import {
@@ -109,6 +112,7 @@ function Toggle({ enabled, disabled = false, onChange, label, sublabel }: Toggle
 
 export default function SettingsPage() {
     const { api } = useAppContext()
+    const queryClient = useQueryClient()
     const { t, locale, setLocale } = useTranslation()
     const goBack = useAppGoBack()
     const [isOpen, setIsOpen] = useState(false)
@@ -127,6 +131,9 @@ export default function SettingsPage() {
     const [permissionNotificationsEnabled, setPermissionNotificationsEnabledState] = useState<boolean>(
         () => isPermissionNotificationsEnabled()
     )
+    const [teamGroupStyle, setTeamGroupStyleState] = useState<TeamGroupStyle>('card')
+    const [isTeamStyleOpen, setIsTeamStyleOpen] = useState(false)
+    const teamStyleContainerRef = useRef<HTMLDivElement>(null)
 
     const fontScaleOptions = getFontScaleOptions()
     const currentLocale = locales.find((loc) => loc.value === locale)
@@ -180,6 +187,17 @@ export default function SettingsPage() {
         })
     }
 
+    const handleTeamGroupStyleChange = (style: TeamGroupStyle) => {
+        const previous = teamGroupStyle
+        setTeamGroupStyleState(style)
+        setIsTeamStyleOpen(false)
+        void api.updatePreferences({ teamGroupStyle: style }).then(() => {
+            void queryClient.invalidateQueries({ queryKey: queryKeys.preferences })
+        }).catch(() => {
+            setTeamGroupStyleState(previous)
+        })
+    }
+
     useEffect(() => {
         let cancelled = false
 
@@ -190,6 +208,9 @@ export default function SettingsPage() {
                 setReadyAnnouncementsEnabled(preferences.readyAnnouncements)
                 setPermissionNotificationsEnabledState(preferences.permissionNotifications)
                 setPermissionNotificationsEnabled(preferences.permissionNotifications)
+                if (preferences.teamGroupStyle) {
+                    setTeamGroupStyleState(preferences.teamGroupStyle)
+                }
             })
             .catch(() => {
                 // Keep local fallback
@@ -202,7 +223,7 @@ export default function SettingsPage() {
 
     // Close dropdown when clicking outside
     useEffect(() => {
-        if (!isOpen && !isFontOpen && !isVoiceOpen) return
+        if (!isOpen && !isFontOpen && !isVoiceOpen && !isTeamStyleOpen) return
 
         const handleClickOutside = (event: MouseEvent) => {
             if (isOpen && containerRef.current && !containerRef.current.contains(event.target as Node)) {
@@ -214,27 +235,31 @@ export default function SettingsPage() {
             if (isVoiceOpen && voiceContainerRef.current && !voiceContainerRef.current.contains(event.target as Node)) {
                 setIsVoiceOpen(false)
             }
+            if (isTeamStyleOpen && teamStyleContainerRef.current && !teamStyleContainerRef.current.contains(event.target as Node)) {
+                setIsTeamStyleOpen(false)
+            }
         }
 
         document.addEventListener('mousedown', handleClickOutside)
         return () => document.removeEventListener('mousedown', handleClickOutside)
-    }, [isOpen, isFontOpen, isVoiceOpen])
+    }, [isOpen, isFontOpen, isVoiceOpen, isTeamStyleOpen])
 
     // Close on escape key
     useEffect(() => {
-        if (!isOpen && !isFontOpen && !isVoiceOpen) return
+        if (!isOpen && !isFontOpen && !isVoiceOpen && !isTeamStyleOpen) return
 
         const handleEscape = (event: KeyboardEvent) => {
             if (event.key === 'Escape') {
                 setIsOpen(false)
                 setIsFontOpen(false)
                 setIsVoiceOpen(false)
+                setIsTeamStyleOpen(false)
             }
         }
 
         document.addEventListener('keydown', handleEscape)
         return () => document.removeEventListener('keydown', handleEscape)
-    }, [isOpen, isFontOpen, isVoiceOpen])
+    }, [isOpen, isFontOpen, isVoiceOpen, isTeamStyleOpen])
 
     return (
         <div className="flex h-full flex-col">
@@ -372,6 +397,64 @@ export default function SettingsPage() {
                                                 role="option"
                                                 aria-selected={isSelected}
                                                 onClick={() => handleFontScaleChange(opt.value)}
+                                                className={`flex items-center justify-between w-full px-3 py-2 text-base text-left transition-colors ${
+                                                    isSelected
+                                                        ? 'text-[var(--app-link)] bg-[var(--app-subtle-bg)]'
+                                                        : 'text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)]'
+                                                }`}
+                                            >
+                                                <span>{opt.label}</span>
+                                                {isSelected && (
+                                                    <span className="ml-2 text-[var(--app-link)]">
+                                                        <CheckIcon />
+                                                    </span>
+                                                )}
+                                            </button>
+                                        )
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Teams section */}
+                    <div className="border-b border-[var(--app-divider)]">
+                        <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
+                            {t('settings.teams.title')}
+                        </div>
+                        <div ref={teamStyleContainerRef} className="relative">
+                            <button
+                                type="button"
+                                onClick={() => setIsTeamStyleOpen(!isTeamStyleOpen)}
+                                className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
+                                aria-expanded={isTeamStyleOpen}
+                                aria-haspopup="listbox"
+                            >
+                                <span className="text-[var(--app-fg)]">{t('settings.teams.displayStyle')}</span>
+                                <span className="flex items-center gap-1 text-[var(--app-hint)]">
+                                    <span>{teamGroupStyle === 'card' ? t('settings.teams.style.card') : t('settings.teams.style.leftBorder')}</span>
+                                    <ChevronDownIcon className={`transition-transform ${isTeamStyleOpen ? 'rotate-180' : ''}`} />
+                                </span>
+                            </button>
+
+                            {isTeamStyleOpen && (
+                                <div
+                                    className="absolute right-3 top-full mt-1 min-w-[160px] rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] shadow-lg overflow-hidden z-50"
+                                    role="listbox"
+                                    aria-label={t('settings.teams.displayStyle')}
+                                >
+                                    {([
+                                        { value: 'card' as const, label: t('settings.teams.style.card') },
+                                        { value: 'left-border' as const, label: t('settings.teams.style.leftBorder') },
+                                    ]).map((opt) => {
+                                        const isSelected = teamGroupStyle === opt.value
+                                        return (
+                                            <button
+                                                key={opt.value}
+                                                type="button"
+                                                role="option"
+                                                aria-selected={isSelected}
+                                                onClick={() => handleTeamGroupStyleChange(opt.value)}
                                                 className={`flex items-center justify-between w-full px-3 py-2 text-base text-left transition-colors ${
                                                     isSelected
                                                         ? 'text-[var(--app-link)] bg-[var(--app-subtle-bg)]'

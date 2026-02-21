@@ -22,6 +22,7 @@ import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { isTelegramApp } from '@/hooks/useTelegram'
 import { useSessionFilter } from '@/hooks/useSessionFilter'
 import { useTeams } from '@/hooks/queries/useTeams'
+import { usePreferences } from '@/hooks/queries/usePreferences'
 import { useMessages } from '@/hooks/queries/useMessages'
 import { useMachines } from '@/hooks/queries/useMachines'
 import { useSession } from '@/hooks/queries/useSession'
@@ -213,6 +214,7 @@ function SessionListPanel(props: {
     machineNames: Map<string, string>
     systemStats: ReturnType<typeof useSystemStats>['stats']
     hideInactive: boolean
+    teamGroupStyle: 'card' | 'left-border'
     onToggleHideInactive: () => void
     onRefresh: () => void
     onSelect: (sessionId: string) => void
@@ -222,7 +224,7 @@ function SessionListPanel(props: {
 }) {
     const { t } = useTranslation()
     const navigate = useNavigate()
-    const { sessions, teams, selectedSessionId, isLoading, error, machineNames, systemStats, hideInactive, onToggleHideInactive, onRefresh, onSelect, onNewSession, scrollContainerRef, api } = props
+    const { sessions, teams, selectedSessionId, isLoading, error, machineNames, systemStats, hideInactive, teamGroupStyle, onToggleHideInactive, onRefresh, onSelect, onNewSession, scrollContainerRef, api } = props
 
     return (
         <>
@@ -273,6 +275,7 @@ function SessionListPanel(props: {
                     selectedSessionId={selectedSessionId}
                     scrollContainerRef={scrollContainerRef}
                     machineNames={machineNames}
+                    teamGroupStyle={teamGroupStyle}
                     onSelect={onSelect}
                     onNewSession={onNewSession}
                     onRefresh={onRefresh}
@@ -296,6 +299,7 @@ function SessionsPage() {
     const { sessions, isLoading, error, refetch } = useSessions(api)
     const { stats: systemStats } = useSystemStats(api)
     const { teams } = useTeams(api)
+    const { teamGroupStyle } = usePreferences(api)
     const { hideInactive, toggleHideInactive } = useSessionFilter()
     const scrollContainerRef = useRef<HTMLDivElement>(null)
     const { width: sidebarWidth, handleResizeStart } = useSidebarResize()
@@ -370,6 +374,7 @@ function SessionsPage() {
         onNewSession: handleNewSession,
         scrollContainerRef,
         api,
+        teamGroupStyle,
     }
 
     return (
