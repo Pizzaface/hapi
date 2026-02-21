@@ -294,6 +294,26 @@ export function getChildSessions(
     return rows.map(toStoredSession)
 }
 
+export function setAcceptAllMessages(
+    db: Database,
+    id: string,
+    acceptAllMessages: boolean,
+    namespace: string
+): boolean {
+    const result = db.prepare(`
+        UPDATE sessions
+        SET accept_all_messages = @accept_all_messages,
+            seq = seq + 1
+        WHERE id = @id
+          AND namespace = @namespace
+    `).run({
+        id,
+        accept_all_messages: acceptAllMessages ? 1 : 0,
+        namespace
+    })
+    return result.changes === 1
+}
+
 export function deleteSession(db: Database, id: string, namespace: string): boolean {
     const result = db.prepare(
         'DELETE FROM sessions WHERE id = ? AND namespace = ?'

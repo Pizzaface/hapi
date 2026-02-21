@@ -4,6 +4,7 @@ import { PROTOCOL_VERSION } from '@hapi/protocol'
 import { configuration } from '../../configuration'
 import { constantTimeEquals } from '../../utils/crypto'
 import { parseAccessToken } from '../../utils/accessToken'
+import type { Store } from '../../store'
 import type { Machine, Session, SyncEngine } from '../../sync/syncEngine'
 
 const bearerSchema = z.string().regex(/^Bearer\s+(.+)$/i)
@@ -47,6 +48,25 @@ const interAgentMessageSchema = z.object({
 const getMessagesQuerySchema = z.object({
     afterSeq: z.coerce.number().int().min(0),
     limit: z.coerce.number().int().min(1).max(200).optional()
+})
+
+const createTeamSchema = z.object({
+    name: z.string().min(1).max(255),
+    color: z.string().max(50).optional(),
+    persistent: z.boolean().optional(),
+    ttlSeconds: z.number().int().min(0).optional(),
+    sortOrder: z.string().max(50).optional()
+})
+
+const updateTeamSchema = z.object({
+    name: z.string().min(1).max(255).optional(),
+    color: z.string().max(50).nullable().optional(),
+    sortOrder: z.string().max(50).nullable().optional(),
+    ttlSeconds: z.number().int().min(0).optional()
+})
+
+const teamMembershipSchema = z.object({
+    sessionId: z.string().min(1)
 })
 
 type CliEnv = {
@@ -98,7 +118,7 @@ function resolveMachineForNamespace(
     return { ok: false, status: 404, error: 'Machine not found' }
 }
 
-export function createCliRoutes(getSyncEngine: () => SyncEngine | null): Hono<CliEnv> {
+export function createCliRoutes(getSyncEngine: () => SyncEngine | null, store: Store): Hono<CliEnv> {
     const app = new Hono<CliEnv>()
 
     app.use('*', async (c, next) => {
@@ -339,6 +359,120 @@ export function createCliRoutes(getSyncEngine: () => SyncEngine | null): Hono<Cl
         }))
 
         return c.json({ sessions: summaries })
+    })
+
+    // --- Team CRUD ---
+
+    app.post('/teams', async (c) => {
+        const namespace = c.get('namespace')
+        const json = await c.req.json().catch(() => null)
+        const parsed = createTeamSchema.safeParse(json)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        try {
+            const team = store.teams.createTeam(parsed.data.name, namespace, {
+                color: parsed.data.color,
+                persistent: parsed.data.persistent,
+                ttlSeconds: parsed.data.ttlSeconds,
+                sortOrder: parsed.data.sortOrder
+            })
+            return c.json({ team }, 201)
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to create team'
+            if (message.includes('UNIQUE')) {
+                return c.json({ error: 'Team name already exists in this namespace' }, 409)
+            }
+            return c.json({ error: message }, 500)
+        }
+    })
+
+    app.get('/teams', (c) => {
+        const namespace = c.get('namespace')
+        const teams = store.teams.getTeamsByNamespace(namespace)
+        return c.json({ teams })
+    })
+
+    app.get('/teams/:id', (c) => {
+        const namespace = c.get('namespace')
+        const teamId = c.req.param('id')
+        const team = store.teams.getTeam(teamId, namespace)
+        if (!team) {
+            return c.json({ error: 'Team not found' }, 404)
+        }
+        const members = store.teams.getTeamMembers(teamId, namespace)
+        return c.json({ team, members })
+    })
+
+    app.patch('/teams/:id', async (c) => {
+        const namespace = c.get('namespace')
+        const teamId = c.req.param('id')
+        const json = await c.req.json().catch(() => null)
+        const parsed = updateTeamSchema.safeParse(json)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        try {
+            const updated = store.teams.updateTeam(teamId, namespace, parsed.data)
+            if (!updated) {
+                return c.json({ error: 'Team not found' }, 404)
+            }
+            const team = store.teams.getTeam(teamId, namespace)
+            return c.json({ team })
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to update team'
+            return c.json({ error: message }, 400)
+        }
+    })
+
+    app.delete('/teams/:id', (c) => {
+        const namespace = c.get('namespace')
+        const teamId = c.req.param('id')
+
+        try {
+            const deleted = store.teams.deleteTeam(teamId, namespace)
+            if (!deleted) {
+                return c.json({ error: 'Team not found' }, 404)
+            }
+            return c.json({ ok: true })
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to delete team'
+            return c.json({ error: message }, 400)
+        }
+    })
+
+    app.post('/teams/:id/join', async (c) => {
+        const namespace = c.get('namespace')
+        const teamId = c.req.param('id')
+        const json = await c.req.json().catch(() => null)
+        const parsed = teamMembershipSchema.safeParse(json)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        const added = store.teams.addMember(teamId, parsed.data.sessionId, namespace)
+        if (!added) {
+            return c.json({ error: 'Failed to join team (team not found or session already in a team)' }, 400)
+        }
+        return c.json({ ok: true })
+    })
+
+    app.delete('/teams/:id/leave', async (c) => {
+        const namespace = c.get('namespace')
+        const teamId = c.req.param('id')
+        const json = await c.req.json().catch(() => null)
+        const parsed = teamMembershipSchema.safeParse(json)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        const removed = store.teams.removeMember(teamId, parsed.data.sessionId, namespace)
+        if (!removed) {
+            return c.json({ error: 'Member not found in team' }, 404)
+        }
+        return c.json({ ok: true })
     })
 
     return app

@@ -13,6 +13,7 @@ import { createCliRoutes } from './routes/cli'
 import { createGitRoutes } from './routes/git'
 import { createMachinesRoutes } from './routes/machines'
 import { createSessionsRoutes } from './routes/sessions'
+import { createTeamsRoutes } from './routes/teams'
 
 const CLI_TOKEN = 'integration-cli-token'
 const JWT_SECRET = new TextEncoder().encode('integration-jwt-secret')
@@ -109,12 +110,13 @@ function createTestContext(): TestContext {
     const engine = new SyncEngine(store, io as never, rpcRegistry as never, sseStub as never)
 
     const app = new Hono<WebAppEnv>()
-    app.route('/cli', createCliRoutes(() => engine))
+    app.route('/cli', createCliRoutes(() => engine, store))
     app.route('/api', createAuthRoutes(JWT_SECRET, store))
     app.use('/api/*', createAuthMiddleware(JWT_SECRET))
     app.route('/api', createSessionsRoutes(() => engine))
     app.route('/api', createMachinesRoutes(() => engine))
     app.route('/api', createGitRoutes(() => engine))
+    app.route('/api', createTeamsRoutes(store, () => engine))
 
     return {
         app,
@@ -859,8 +861,9 @@ describe('web integration routes', () => {
     })
 
     it('/cli/restart-sessions rejects missing auth and returns 503 when engine is unavailable', async () => {
+        const nullStore = new Store(':memory:')
         const app = new Hono<WebAppEnv>()
-        app.route('/cli', createCliRoutes(() => null))
+        app.route('/cli', createCliRoutes(() => null, nullStore))
 
         const noAuth = await app.request('/cli/restart-sessions', {
             method: 'POST',
@@ -1450,6 +1453,463 @@ describe('web integration routes', () => {
             expect(betaResponse.status).toBe(200)
             const betaBody = await betaResponse.json() as { sessions: Array<{ id: string }> }
             expect(betaBody.sessions).toHaveLength(1)
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    // --- CLI Team CRUD ---
+
+    it('POST /cli/teams creates a team and GET /cli/teams lists it', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const alphaToken = `${CLI_TOKEN}:alpha`
+
+            const createResponse = await ctx.app.request('/cli/teams', {
+                method: 'POST',
+                headers: cliJsonHeaders(alphaToken),
+                body: JSON.stringify({ name: 'My Team', color: '#FF0000' })
+            })
+            expect(createResponse.status).toBe(201)
+            const created = await createResponse.json() as { team: { id: string; name: string; color: string; namespace: string } }
+            expect(created.team.name).toBe('My Team')
+            expect(created.team.color).toBe('#FF0000')
+            expect(created.team.namespace).toBe('alpha')
+
+            const listResponse = await ctx.app.request('/cli/teams', {
+                headers: cliHeaders(alphaToken)
+            })
+            expect(listResponse.status).toBe(200)
+            const listed = await listResponse.json() as { teams: Array<{ id: string; name: string }> }
+            const teamNames = listed.teams.map((t) => t.name)
+            expect(teamNames).toContain('My Team')
+            expect(teamNames).toHaveLength(1)
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('GET /cli/teams/:id returns team with members', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const alphaToken = `${CLI_TOKEN}:alpha`
+
+            const team = ctx.store.teams.createTeam('Detail Team', 'alpha', { color: '#00FF00' })
+            const session = ctx.engine.getOrCreateSession('detail-session', { path: '/repo' }, null, 'alpha')
+            ctx.store.teams.addMember(team.id, session.id, 'alpha')
+
+            const response = await ctx.app.request(`/cli/teams/${team.id}`, {
+                headers: cliHeaders(alphaToken)
+            })
+            expect(response.status).toBe(200)
+            const body = await response.json() as { team: { id: string; name: string }; members: string[] }
+            expect(body.team.name).toBe('Detail Team')
+            expect(body.members).toEqual([session.id])
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('PATCH /cli/teams/:id updates team and protects always-on rename', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const alphaToken = `${CLI_TOKEN}:alpha`
+            const team = ctx.store.teams.createTeam('Updatable', 'alpha')
+
+            const patchResponse = await ctx.app.request(`/cli/teams/${team.id}`, {
+                method: 'PATCH',
+                headers: cliJsonHeaders(alphaToken),
+                body: JSON.stringify({ name: 'Updated Name', color: '#AABBCC' })
+            })
+            expect(patchResponse.status).toBe(200)
+            const patched = await patchResponse.json() as { team: { name: string; color: string } }
+            expect(patched.team.name).toBe('Updated Name')
+            expect(patched.team.color).toBe('#AABBCC')
+
+            // Protect always-on team from rename
+            const renameAlwaysOn = await ctx.app.request('/cli/teams/always-on', {
+                method: 'PATCH',
+                headers: cliJsonHeaders(alphaToken),
+                body: JSON.stringify({ name: 'Hacked' })
+            })
+            expect(renameAlwaysOn.status).toBe(400)
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('DELETE /cli/teams/:id deletes team and protects always-on', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const alphaToken = `${CLI_TOKEN}:alpha`
+            const team = ctx.store.teams.createTeam('Deletable', 'alpha')
+
+            const deleteResponse = await ctx.app.request(`/cli/teams/${team.id}`, {
+                method: 'DELETE',
+                headers: cliHeaders(alphaToken)
+            })
+            expect(deleteResponse.status).toBe(200)
+            expect(await deleteResponse.json()).toEqual({ ok: true })
+
+            // Protect always-on team from deletion
+            const deleteAlwaysOn = await ctx.app.request('/cli/teams/always-on', {
+                method: 'DELETE',
+                headers: cliHeaders(alphaToken)
+            })
+            expect(deleteAlwaysOn.status).toBe(400)
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('POST /cli/teams/:id/join and DELETE /cli/teams/:id/leave manage membership', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const alphaToken = `${CLI_TOKEN}:alpha`
+            const team = ctx.store.teams.createTeam('Join Team', 'alpha')
+            const session = ctx.engine.getOrCreateSession('member-session', { path: '/repo' }, null, 'alpha')
+
+            const joinResponse = await ctx.app.request(`/cli/teams/${team.id}/join`, {
+                method: 'POST',
+                headers: cliJsonHeaders(alphaToken),
+                body: JSON.stringify({ sessionId: session.id })
+            })
+            expect(joinResponse.status).toBe(200)
+            expect(await joinResponse.json()).toEqual({ ok: true })
+
+            const members = ctx.store.teams.getTeamMembers(team.id, 'alpha')
+            expect(members).toEqual([session.id])
+
+            const leaveResponse = await ctx.app.request(`/cli/teams/${team.id}/leave`, {
+                method: 'DELETE',
+                headers: cliJsonHeaders(alphaToken),
+                body: JSON.stringify({ sessionId: session.id })
+            })
+            expect(leaveResponse.status).toBe(200)
+            expect(await leaveResponse.json()).toEqual({ ok: true })
+
+            const membersAfter = ctx.store.teams.getTeamMembers(team.id, 'alpha')
+            expect(membersAfter).toEqual([])
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('CLI team routes enforce namespace isolation', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const alphaToken = `${CLI_TOKEN}:alpha`
+            const betaToken = `${CLI_TOKEN}:beta`
+
+            const alphaTeam = ctx.store.teams.createTeam('Alpha Team', 'alpha')
+
+            // Beta cannot see alpha's team
+            const betaGet = await ctx.app.request(`/cli/teams/${alphaTeam.id}`, {
+                headers: cliHeaders(betaToken)
+            })
+            expect(betaGet.status).toBe(404)
+
+            // Beta cannot update alpha's team
+            const betaPatch = await ctx.app.request(`/cli/teams/${alphaTeam.id}`, {
+                method: 'PATCH',
+                headers: cliJsonHeaders(betaToken),
+                body: JSON.stringify({ name: 'Stolen' })
+            })
+            expect(betaPatch.status).toBe(404)
+
+            // Beta cannot delete alpha's team
+            const betaDelete = await ctx.app.request(`/cli/teams/${alphaTeam.id}`, {
+                method: 'DELETE',
+                headers: cliHeaders(betaToken)
+            })
+            expect(betaDelete.status).toBe(404)
+
+            // Beta list should not include alpha's teams
+            const betaList = await ctx.app.request('/cli/teams', {
+                headers: cliHeaders(betaToken)
+            })
+            expect(betaList.status).toBe(200)
+            const betaTeams = await betaList.json() as { teams: Array<{ name: string }> }
+            const betaTeamNames = betaTeams.teams.map((t) => t.name)
+            expect(betaTeamNames).not.toContain('Alpha Team')
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('POST /cli/teams rejects duplicate team name in same namespace', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const alphaToken = `${CLI_TOKEN}:alpha`
+
+            await ctx.app.request('/cli/teams', {
+                method: 'POST',
+                headers: cliJsonHeaders(alphaToken),
+                body: JSON.stringify({ name: 'Unique Team' })
+            })
+
+            const duplicate = await ctx.app.request('/cli/teams', {
+                method: 'POST',
+                headers: cliJsonHeaders(alphaToken),
+                body: JSON.stringify({ name: 'Unique Team' })
+            })
+            expect(duplicate.status).toBe(409)
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    // --- Web Team CRUD ---
+
+    it('GET /api/teams lists teams for namespace', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const token = await getAccessToken(ctx.app, 'alpha')
+            ctx.store.teams.createTeam('Web Team', 'alpha', { color: '#0000FF' })
+
+            const response = await ctx.app.request('/api/teams', {
+                headers: authHeaders(token)
+            })
+            expect(response.status).toBe(200)
+            const body = await response.json() as { teams: Array<{ name: string }> }
+            expect(body.teams.map((t) => t.name)).toContain('Web Team')
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('POST /api/teams creates a team via web', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const token = await getAccessToken(ctx.app, 'alpha')
+
+            const response = await ctx.app.request('/api/teams', {
+                method: 'POST',
+                headers: authJsonHeaders(token),
+                body: JSON.stringify({ name: 'Web Created', color: '#123456', persistent: true })
+            })
+            expect(response.status).toBe(201)
+            const body = await response.json() as { team: { name: string; persistent: boolean; color: string } }
+            expect(body.team.name).toBe('Web Created')
+            expect(body.team.persistent).toBe(true)
+            expect(body.team.color).toBe('#123456')
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('PATCH /api/teams/:id updates a team via web', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const token = await getAccessToken(ctx.app, 'alpha')
+            const team = ctx.store.teams.createTeam('Before', 'alpha')
+
+            const response = await ctx.app.request(`/api/teams/${team.id}`, {
+                method: 'PATCH',
+                headers: authJsonHeaders(token),
+                body: JSON.stringify({ name: 'After', color: '#FFFF00' })
+            })
+            expect(response.status).toBe(200)
+            const body = await response.json() as { team: { name: string; color: string } }
+            expect(body.team.name).toBe('After')
+            expect(body.team.color).toBe('#FFFF00')
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('DELETE /api/teams/:id deletes a team via web', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const token = await getAccessToken(ctx.app, 'alpha')
+            const team = ctx.store.teams.createTeam('WebDelete', 'alpha')
+
+            const response = await ctx.app.request(`/api/teams/${team.id}`, {
+                method: 'DELETE',
+                headers: authHeaders(token)
+            })
+            expect(response.status).toBe(200)
+            expect(await response.json()).toEqual({ ok: true })
+
+            const after = ctx.store.teams.getTeam(team.id, 'alpha')
+            expect(after).toBeNull()
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('PATCH /api/group-sort-orders upserts sort order for any key', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const token = await getAccessToken(ctx.app, 'alpha')
+
+            // Keys with slashes, dots, tildes (directory paths)
+            const response = await ctx.app.request('/api/group-sort-orders', {
+                method: 'PATCH',
+                headers: authJsonHeaders(token),
+                body: JSON.stringify({ groupKey: '/home/user/~/project.dir/repo', sortOrder: 'a0V' })
+            })
+            expect(response.status).toBe(200)
+            expect(await response.json()).toEqual({ ok: true })
+
+            const orders = ctx.store.teams.getGroupSortOrders('alpha')
+            expect(orders).toHaveLength(1)
+            expect(orders[0]?.groupKey).toBe('/home/user/~/project.dir/repo')
+            expect(orders[0]?.sortOrder).toBe('a0V')
+
+            // Update existing
+            const update = await ctx.app.request('/api/group-sort-orders', {
+                method: 'PATCH',
+                headers: authJsonHeaders(token),
+                body: JSON.stringify({ groupKey: '/home/user/~/project.dir/repo', sortOrder: 'b0V' })
+            })
+            expect(update.status).toBe(200)
+            const updated = ctx.store.teams.getGroupSortOrders('alpha')
+            expect(updated).toHaveLength(1)
+            expect(updated[0]?.sortOrder).toBe('b0V')
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('POST /api/sessions/:id/accept-all-messages sets flag', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const token = await getAccessToken(ctx.app, 'alpha')
+            const session = ctx.engine.getOrCreateSession('accept-all', { path: '/repo' }, null, 'alpha')
+
+            // Check default value via store (the engine Session type may not expose acceptAllMessages)
+            const initial = ctx.store.sessions.getSession(session.id)
+            expect(initial?.acceptAllMessages).toBe(false)
+
+            const response = await ctx.app.request(`/api/sessions/${session.id}/accept-all-messages`, {
+                method: 'POST',
+                headers: authJsonHeaders(token),
+                body: JSON.stringify({ acceptAllMessages: true })
+            })
+            expect(response.status).toBe(200)
+            expect(await response.json()).toEqual({ ok: true })
+
+            const stored = ctx.store.sessions.getSession(session.id)
+            expect(stored?.acceptAllMessages).toBe(true)
+
+            // Set back to false
+            const off = await ctx.app.request(`/api/sessions/${session.id}/accept-all-messages`, {
+                method: 'POST',
+                headers: authJsonHeaders(token),
+                body: JSON.stringify({ acceptAllMessages: false })
+            })
+            expect(off.status).toBe(200)
+            const storedOff = ctx.store.sessions.getSession(session.id)
+            expect(storedOff?.acceptAllMessages).toBe(false)
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('POST /api/sessions/:id/accept-all-messages enforces namespace', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const alphaToken = await getAccessToken(ctx.app, 'alpha')
+            const betaSession = ctx.engine.getOrCreateSession('beta-accept', { path: '/repo' }, null, 'beta')
+
+            const response = await ctx.app.request(`/api/sessions/${betaSession.id}/accept-all-messages`, {
+                method: 'POST',
+                headers: authJsonHeaders(alphaToken),
+                body: JSON.stringify({ acceptAllMessages: true })
+            })
+            expect(response.status).toBe(403)
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('Web team routes enforce namespace isolation', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const alphaToken = await getAccessToken(ctx.app, 'alpha')
+            const betaToken = await getAccessToken(ctx.app, 'beta')
+
+            const alphaTeam = ctx.store.teams.createTeam('Alpha Only', 'alpha')
+
+            // Beta cannot update alpha's team
+            const betaPatch = await ctx.app.request(`/api/teams/${alphaTeam.id}`, {
+                method: 'PATCH',
+                headers: authJsonHeaders(betaToken),
+                body: JSON.stringify({ name: 'Stolen' })
+            })
+            expect(betaPatch.status).toBe(404)
+
+            // Beta cannot delete alpha's team
+            const betaDelete = await ctx.app.request(`/api/teams/${alphaTeam.id}`, {
+                method: 'DELETE',
+                headers: authHeaders(betaToken)
+            })
+            expect(betaDelete.status).toBe(404)
+
+            // Alpha can see its team
+            const alphaList = await ctx.app.request('/api/teams', {
+                headers: authHeaders(alphaToken)
+            })
+            expect(alphaList.status).toBe(200)
+            const alphaTeams = await alphaList.json() as { teams: Array<{ name: string }> }
+            expect(alphaTeams.teams.map((t) => t.name)).toContain('Alpha Only')
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('Web spawn schema accepts optional teamId', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const token = await getAccessToken(ctx.app, 'alpha')
+            const machine = ctx.engine.getOrCreateMachine(
+                'spawn-team-machine',
+                { host: 'host-a', platform: 'linux', happyCliVersion: '1.0.0' },
+                { status: 'running' },
+                'alpha'
+            )
+            ctx.engine.handleMachineAlive({ machineId: machine.id, time: Date.now() })
+
+            const spawnedSession = ctx.engine.getOrCreateSession(
+                'spawned-with-team',
+                { path: '/tmp/team-task', host: 'host-a', machineId: machine.id },
+                null,
+                'alpha'
+            )
+            ctx.engine.handleSessionAlive({ sid: spawnedSession.id, time: Date.now() })
+
+            ctx.registerRpc(`${machine.id}:spawn-happy-session`, () => {
+                return { type: 'success', sessionId: spawnedSession.id }
+            })
+
+            const response = await ctx.app.request(`/api/machines/${machine.id}/spawn`, {
+                method: 'POST',
+                headers: authJsonHeaders(token),
+                body: JSON.stringify({
+                    directory: '/tmp/team-task',
+                    teamId: 'some-team-id'
+                })
+            })
+            expect(response.status).toBe(200)
+            const body = await response.json() as { type: string; sessionId: string }
+            expect(body.type).toBe('success')
         } finally {
             ctx.stop()
         }

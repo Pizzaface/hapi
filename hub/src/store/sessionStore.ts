@@ -10,6 +10,7 @@ import {
     getSessionByNamespace,
     getSessions,
     getSessionsByNamespace,
+    setAcceptAllMessages,
     setParentSessionId,
     setSessionTodos,
     updateSessionAgentState,
@@ -85,5 +86,9 @@ export class SessionStore {
 
     getChildSessions(parentSessionId: string, namespace: string): StoredSession[] {
         return getChildSessions(this.db, parentSessionId, namespace)
+    }
+
+    setAcceptAllMessages(id: string, acceptAllMessages: boolean, namespace: string): boolean {
+        return setAcceptAllMessages(this.db, id, acceptAllMessages, namespace)
     }
 }

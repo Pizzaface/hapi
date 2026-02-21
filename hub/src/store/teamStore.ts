@@ -1,20 +1,22 @@
 import type { Database } from 'bun:sqlite'
 
 import type { StoredTeam } from './types'
-import type { CreateTeamOptions, UpdateTeamFields } from './teams'
+import type { CreateTeamOptions, StoredGroupSortOrder, UpdateTeamFields } from './teams'
 import {
     addMember,
     areInSameTeam,
     createTeam,
     deleteTeam,
     getExpiredTemporaryTeams,
+    getGroupSortOrders,
     getTeam,
     getTeamForSession,
     getTeamMembers,
     getTeamsByNamespace,
     removeMember,
     updateLastActiveMemberAt,
-    updateTeam
+    updateTeam,
+    upsertGroupSortOrder
 } from './teams'
 
 export class TeamStore {
@@ -70,5 +72,13 @@ export class TeamStore {
 
     getExpiredTemporaryTeams(now: number): StoredTeam[] {
         return getExpiredTemporaryTeams(this.db, now)
+    }
+
+    upsertGroupSortOrder(groupKey: string, namespace: string, sortOrder: string): void {
+        upsertGroupSortOrder(this.db, groupKey, namespace, sortOrder)
+    }
+
+    getGroupSortOrders(namespace: string): StoredGroupSortOrder[] {
+        return getGroupSortOrders(this.db, namespace)
     }
 }

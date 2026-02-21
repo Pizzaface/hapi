@@ -258,6 +258,47 @@ export function updateLastActiveMemberAt(
     return result.changes === 1
 }
 
+export type StoredGroupSortOrder = {
+    groupKey: string
+    namespace: string
+    sortOrder: string
+    updatedAt: number
+}
+
+export function upsertGroupSortOrder(
+    db: Database,
+    groupKey: string,
+    namespace: string,
+    sortOrder: string
+): void {
+    db.prepare(`
+        INSERT INTO group_sort_orders (group_key, namespace, sort_order, updated_at)
+        VALUES (@group_key, @namespace, @sort_order, @updated_at)
+        ON CONFLICT (namespace, group_key)
+        DO UPDATE SET sort_order = @sort_order, updated_at = @updated_at
+    `).run({
+        group_key: groupKey,
+        namespace,
+        sort_order: sortOrder,
+        updated_at: Date.now()
+    })
+}
+
+export function getGroupSortOrders(
+    db: Database,
+    namespace: string
+): StoredGroupSortOrder[] {
+    const rows = db.prepare(
+        'SELECT group_key, namespace, sort_order, updated_at FROM group_sort_orders WHERE namespace = ?'
+    ).all(namespace) as Array<{ group_key: string; namespace: string; sort_order: string; updated_at: number }>
+    return rows.map((row) => ({
+        groupKey: row.group_key,
+        namespace: row.namespace,
+        sortOrder: row.sort_order,
+        updatedAt: row.updated_at
+    }))
+}
+
 export function getExpiredTemporaryTeams(db: Database, now: number): StoredTeam[] {
     const rows = db.prepare(`
         SELECT * FROM teams
