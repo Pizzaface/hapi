@@ -22,6 +22,10 @@ export type SessionSummary = {
     pendingRequestsCount: number
     modelMode?: ModelMode
     parentSessionId?: string | null
+    /** v2: currently running tool name + start time. Undefined in v1. */
+    runningTool?: { tool: string; startedAt: number } | null
+    /** v2: last error message from the agent. Undefined in v1. */
+    errorMessage?: string | null
 }
 
 export function toSessionSummary(session: Session): SessionSummary {

@@ -40,8 +40,10 @@ import { SessionActionMenu } from '@/components/SessionActionMenu'
 import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { clearMessageWindow } from '@/lib/message-window-store'
+import { deriveSessionStatus } from '@hapi/protocol'
 import { resolveProvider } from '@/lib/providerTheme'
 import { queryKeys } from '@/lib/query-keys'
+import { getSessionStatusDisplay } from '@/lib/sessionStatusDisplay'
 import { useTranslation } from '@/lib/use-translation'
 import { ProviderIcon } from './ProviderIcon'
 
@@ -888,9 +890,8 @@ function SessionItem(props: {
     }, [])
 
     const sessionName = getSessionTitle(s)
-    const statusDotClass = s.active
-        ? (s.thinking ? 'bg-[#007AFF]' : 'bg-[var(--app-badge-success-text)]')
-        : 'bg-[var(--app-hint)]'
+    const sessionStatus = deriveSessionStatus(s)
+    const statusDisplay = getSessionStatusDisplay(sessionStatus)
     const unreadLabelClass = getUnreadLabelClass(s.thinking)
     const highlighted = selected || (selectionMode && selectedForBulk)
     const providerDisplay = resolveProvider(s.metadata?.flavor)
@@ -963,7 +964,7 @@ function SessionItem(props: {
                                 ) : null}
                                 <span className="flex h-4 w-4 items-center justify-center" aria-hidden="true">
                                     <span
-                                        className={`h-2 w-2 rounded-full ${statusDotClass}`}
+                                        className={`h-2 w-2 rounded-full ${statusDisplay.dotClass}${statusDisplay.animate ? ' animate-pulse' : ''}`}
                                     />
                                 </span>
                                 <div className="truncate text-base font-medium">
@@ -971,9 +972,11 @@ function SessionItem(props: {
                                 </div>
                             </div>
                             <div className="flex items-center gap-2 shrink-0 text-xs">
-                                {s.thinking ? (
-                                    <span className="text-[#007AFF] animate-pulse">
-                                        {t('session.item.thinking')}
+                                {statusDisplay.i18nKey ? (
+                                    <span className={`${statusDisplay.labelClass}${statusDisplay.animate ? ' animate-pulse' : ''}`}>
+                                        {sessionStatus === 'waiting-for-permission'
+                                            ? `${t(statusDisplay.i18nKey)} · ${s.pendingRequestsCount}`
+                                            : t(statusDisplay.i18nKey)}
                                     </span>
                                 ) : null}
                                 {unread ? (
@@ -991,11 +994,6 @@ function SessionItem(props: {
                                         </span>
                                     )
                                 })()}
-                                {s.pendingRequestsCount > 0 ? (
-                                    <span className="text-[var(--app-badge-warning-text)]">
-                                        {t('session.item.pending')} {s.pendingRequestsCount}
-                                    </span>
-                                ) : null}
                                 <span className="text-[var(--app-hint)]">
                                     {formatRelativeTime(s.updatedAt, t)}
                                 </span>
@@ -1605,6 +1603,9 @@ export function SessionList(props: {
                     const groupMachineId = group.machineId ?? group.sessions[0]?.metadata?.machineId
                     const groupMachineName = groupMachineId ? machineNames?.get(groupMachineId) : undefined
                     const groupUnreadCount = group.sessions.filter(session => unreadSessionIds.has(session.id)).length
+                    const groupAttentionCount = group.sessions.filter(session =>
+                        deriveSessionStatus(session) === 'waiting-for-permission'
+                    ).length
                     return (
                         <div key={group.key}>
                             <div data-group-header={group.directory} className="sticky top-0 z-10 flex items-center gap-1 border-b border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-3 py-2">
@@ -1626,6 +1627,11 @@ export function SessionList(props: {
                                             <span className="shrink-0 text-xs text-[var(--app-hint)]">
                                                 ({group.sessions.length})
                                             </span>
+                                            {groupAttentionCount > 0 ? (
+                                                <span className="shrink-0 rounded-full bg-[var(--app-badge-warning-bg)] border border-[var(--app-badge-warning-border)] px-1.5 text-xs text-[var(--app-badge-warning-text)]">
+                                                    {groupAttentionCount}
+                                                </span>
+                                            ) : null}
                                             {groupUnreadCount > 0 ? (
                                                 <span className="shrink-0 text-xs text-[#34C759]">
                                                     {groupUnreadCount} {t('session.item.unread')}

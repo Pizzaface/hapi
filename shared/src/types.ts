@@ -13,6 +13,7 @@ export type {
 export type { BeadSummary } from './beads'
 
 export type { SessionSummary, SessionSummaryMetadata } from './sessionSummary'
+export type { SessionStatusKey, SessionStatusInput } from './sessionStatus'
 
 export type {
     AgentFlavor,
