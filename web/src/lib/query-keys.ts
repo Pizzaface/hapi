@@ -4,6 +4,7 @@ export const queryKeys = {
     sessionBeadsAll: ['session-beads'] as const,
     sessionBeads: (sessionId: string) => ['session-beads', sessionId] as const,
     messages: (sessionId: string) => ['messages', sessionId] as const,
+    teams: ['teams'] as const,
     machines: ['machines'] as const,
     machineAgents: (machineId: string, directory: string) => ['machine-agents', machineId, directory] as const,
     gitStatus: (sessionId: string) => ['git-status', sessionId] as const,

@@ -29,7 +29,8 @@ import type {
     VisibilityPayload,
     SessionResponse,
     SessionBeadsResponse,
-    SessionsResponse
+    SessionsResponse,
+    TeamsResponse
 } from '@/types/api'
 
 type ApiClientOptions = {
@@ -186,6 +187,10 @@ export class ApiClient {
 
     async getSessions(): Promise<SessionsResponse> {
         return await this.request<SessionsResponse>('/api/sessions')
+    }
+
+    async getTeams(): Promise<TeamsResponse> {
+        return await this.request<TeamsResponse>('/api/teams')
     }
 
     async clearInactiveSessions(

@@ -128,7 +128,8 @@ export class SessionCache {
             todos,
             permissionMode: existing?.permissionMode,
             modelMode: existing?.modelMode,
-            parentSessionId: stored.parentSessionId
+            parentSessionId: stored.parentSessionId,
+            acceptAllMessages: stored.acceptAllMessages || undefined
         }
 
         this.sessions.set(sessionId, session)

@@ -142,7 +142,8 @@ export const SessionSchema = z.object({
     todos: TodosSchema.optional(),
     permissionMode: PermissionModeSchema.optional(),
     modelMode: ModelModeSchema.optional(),
-    parentSessionId: z.string().nullable().optional()
+    parentSessionId: z.string().nullable().optional(),
+    acceptAllMessages: z.boolean().optional()
 })
 
 export type Session = z.infer<typeof SessionSchema>
@@ -164,6 +165,11 @@ const SessionChangedSchema = SessionEventBaseSchema.extend({
 
 const MachineChangedSchema = SessionEventBaseSchema.extend({
     machineId: z.string()
+})
+
+const TeamEventBaseSchema = z.object({
+    namespace: z.string(),
+    teamId: z.string()
 })
 
 export const SyncEventSchema = z.discriminatedUnion('type', [
@@ -206,6 +212,21 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
             status: z.string(),
             subscriptionId: z.string().optional()
         }).optional()
+    }),
+    TeamEventBaseSchema.extend({
+        type: z.literal('team:updated'),
+        data: z.unknown().optional()
+    }),
+    TeamEventBaseSchema.extend({
+        type: z.literal('team:deleted')
+    }),
+    TeamEventBaseSchema.extend({
+        type: z.literal('member-joined'),
+        sessionId: z.string()
+    }),
+    TeamEventBaseSchema.extend({
+        type: z.literal('member-left'),
+        sessionId: z.string()
     })
 ])
 

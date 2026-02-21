@@ -3,6 +3,7 @@ import type {
     Session,
     SessionSummary,
     SyncEvent as ProtocolSyncEvent,
+    TeamSummary,
     WorktreeMetadata,
     BeadSummary
 } from '@hapi/protocol/types'
@@ -15,6 +16,7 @@ export type {
     Session,
     SessionSummary,
     SessionSummaryMetadata,
+    TeamSummary,
     TodoItem,
     WorktreeMetadata,
     BeadSummary
@@ -64,6 +66,7 @@ export type AuthResponse = {
 
 export type SessionsResponse = { sessions: SessionSummary[] }
 export type SessionResponse = { session: Session }
+export type TeamsResponse = { teams: TeamSummary[] }
 export type SessionBeadsResponse = { beads: BeadSummary[]; stale: boolean }
 export type ClearInactiveSessionsOlderThan = '7d' | '30d' | 'all'
 export type ClearInactiveSessionsResponse = {

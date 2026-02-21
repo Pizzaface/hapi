@@ -1,6 +1,15 @@
 import type { ModelMode } from './modes'
 import type { Session, WorktreeMetadata } from './schemas'
 
+export type TeamSummary = {
+    id: string
+    name: string
+    color: string | null
+    persistent: boolean
+    sortOrder: string | null
+    memberSessionIds: string[]
+}
+
 export type SessionSummaryMetadata = {
     name?: string
     path: string
@@ -26,6 +35,7 @@ export type SessionSummary = {
     runningTool?: { tool: string; startedAt: number } | null
     /** v2: last error message from the agent. Undefined in v1. */
     errorMessage?: string | null
+    acceptAllMessages?: boolean
 }
 
 export function toSessionSummary(session: Session): SessionSummary {
@@ -56,6 +66,7 @@ export function toSessionSummary(session: Session): SessionSummary {
         todoProgress,
         pendingRequestsCount,
         modelMode: session.modelMode,
-        parentSessionId: session.parentSessionId ?? null
+        parentSessionId: session.parentSessionId ?? null,
+        acceptAllMessages: session.acceptAllMessages
     }
 }

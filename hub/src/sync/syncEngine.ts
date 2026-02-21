@@ -236,6 +236,10 @@ export class SyncEngine {
         this.eventPublisher.emit(event)
     }
 
+    emitEvent(event: SyncEvent): void {
+        this.eventPublisher.emit(event)
+    }
+
     handleSessionAlive(payload: {
         sid: string
         time: number

@@ -12,7 +12,7 @@ export type {
 } from './schemas'
 export type { BeadSummary } from './beads'
 
-export type { SessionSummary, SessionSummaryMetadata } from './sessionSummary'
+export type { SessionSummary, SessionSummaryMetadata, TeamSummary } from './sessionSummary'
 export type { SessionStatusKey, SessionStatusInput } from './sessionStatus'
 
 export type {

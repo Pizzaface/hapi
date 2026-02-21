@@ -167,6 +167,10 @@ export function useSSE(options: {
                 void queryClient.invalidateQueries({ queryKey: queryKeys.sessionBeads(event.sessionId) })
             }
 
+            if (event.type === 'team:updated' || event.type === 'team:deleted' || event.type === 'member-joined' || event.type === 'member-left') {
+                void queryClient.invalidateQueries({ queryKey: queryKeys.teams })
+            }
+
             onEventRef.current(event)
         }
 
