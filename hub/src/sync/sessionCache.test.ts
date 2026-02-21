@@ -199,6 +199,25 @@ describe('SessionCache clearInactiveSessions', () => {
         expect(store.sessionBeads.getSnapshot(inactive.id, 'hapi-inactive')).toBeNull()
     })
 
+    it('succeeds when sessions have messages (CASCADE deletes)', async () => {
+        const { cache, store } = createPersistentCache()
+        const now = Date.now()
+        const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000
+
+        const session = cache.getOrCreateSession('with-messages', { path: '/repo', host: 'host' }, null, 'default')
+        setSessionUpdatedAt(cache, session.id, now - (thirtyDaysMs + 1_000))
+
+        // Add messages — CASCADE delete would inflate result.changes
+        store.messages.addMessage(session.id, { text: 'hello' })
+        store.messages.addMessage(session.id, { text: 'world' })
+
+        const result = await cache.clearInactiveSessions('default', thirtyDaysMs)
+
+        expect(result.deleted).toEqual([session.id])
+        expect(result.failed).toEqual([])
+        expect(store.sessions.getSession(session.id)).toBeNull()
+    })
+
     it('respects age filter cutoff', async () => {
         const { cache, store } = createPersistentCache()
         const now = Date.now()

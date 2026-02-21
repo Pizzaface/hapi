@@ -329,10 +329,7 @@ export class SessionCache {
         try {
             this.store.transaction(() => {
                 this.store.sessionBeads.deleteSessionBatch(candidateIds)
-                const deletedCount = this.store.sessions.deleteSessionBatch(candidateIds, namespace)
-                if (deletedCount !== candidateIds.length) {
-                    throw new Error('Failed to delete all inactive sessions')
-                }
+                this.store.sessions.deleteSessionBatch(candidateIds, namespace)
             })
         } catch {
             return { deleted: [], failed: candidateIds }
