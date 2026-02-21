@@ -3,17 +3,19 @@ import { resolveProvider, type ProviderKey } from '@/lib/providerTheme'
 type ProviderIconProps = {
     flavor?: string | null
     className?: string
+    size?: 'sm' | 'md'
 }
 
 type ProviderGlyphProps = {
     color: string
+    svgClass?: string
 }
 
 function ClaudeGlyph(props: ProviderGlyphProps) {
     return (
         <svg
             viewBox="0 0 16 16"
-            className="h-3.5 w-3.5"
+            className={props.svgClass ?? 'h-3.5 w-3.5'}
             style={{ color: props.color }}
             aria-hidden="true"
         >
@@ -26,7 +28,7 @@ function CodexGlyph(props: ProviderGlyphProps) {
     return (
         <svg
             viewBox="0 0 16 16"
-            className="h-3.5 w-3.5"
+            className={props.svgClass ?? 'h-3.5 w-3.5'}
             style={{ color: props.color }}
             fill="none"
             stroke="currentColor"
@@ -46,7 +48,7 @@ function GeminiGlyph(props: ProviderGlyphProps) {
     return (
         <svg
             viewBox="0 0 16 16"
-            className="h-3.5 w-3.5"
+            className={props.svgClass ?? 'h-3.5 w-3.5'}
             style={{ color: props.color }}
             aria-hidden="true"
         >
@@ -59,7 +61,7 @@ function OpenCodeGlyph(props: ProviderGlyphProps) {
     return (
         <svg
             viewBox="0 0 16 16"
-            className="h-3.5 w-3.5"
+            className={props.svgClass ?? 'h-3.5 w-3.5'}
             style={{ color: props.color }}
             fill="none"
             stroke="currentColor"
@@ -79,7 +81,7 @@ function UnknownGlyph(props: ProviderGlyphProps) {
     return (
         <svg
             viewBox="0 0 16 16"
-            className="h-3.5 w-3.5"
+            className={props.svgClass ?? 'h-3.5 w-3.5'}
             style={{ color: props.color }}
             aria-hidden="true"
         >
@@ -88,24 +90,25 @@ function UnknownGlyph(props: ProviderGlyphProps) {
     )
 }
 
-function renderGlyph(key: ProviderKey, color: string) {
-    if (key === 'claude') return <ClaudeGlyph color={color} />
-    if (key === 'codex') return <CodexGlyph color={color} />
-    if (key === 'gemini') return <GeminiGlyph color={color} />
-    if (key === 'opencode') return <OpenCodeGlyph color={color} />
-    return <UnknownGlyph color={color} />
+function renderGlyph(key: ProviderKey, color: string, svgClass?: string) {
+    if (key === 'claude') return <ClaudeGlyph color={color} svgClass={svgClass} />
+    if (key === 'codex') return <CodexGlyph color={color} svgClass={svgClass} />
+    if (key === 'gemini') return <GeminiGlyph color={color} svgClass={svgClass} />
+    if (key === 'opencode') return <OpenCodeGlyph color={color} svgClass={svgClass} />
+    return <UnknownGlyph color={color} svgClass={svgClass} />
 }
 
 export function ProviderIcon(props: ProviderIconProps) {
     const provider = resolveProvider(props.flavor)
     const color = `var(${provider.colorVar})`
+    const svgClass = props.size === 'sm' ? 'h-3 w-3' : 'h-3.5 w-3.5'
 
     return (
         <span
             data-provider-key={provider.key}
             className={`flex h-4 w-4 items-center justify-center ${props.className ?? ''}`.trim()}
         >
-            {renderGlyph(provider.key, color)}
+            {renderGlyph(provider.key, color, svgClass)}
         </span>
     )
 }

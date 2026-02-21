@@ -43,10 +43,10 @@
     --app-badge-error-text: #b91c1c;
     --app-badge-error-border: rgba(239, 68, 68, 0.3);
 
-    /* Provider colors (light) */
-    --app-provider-claude: #b45309;
-    --app-provider-codex: #15803d;
-    --app-provider-gemini: #1d4ed8;
+    /* Provider colors (light) — avoid green/blue (used by status dots) */
+    --app-provider-claude: #92400e;
+    --app-provider-codex: #0f766e;
+    --app-provider-gemini: #be185d;
     --app-provider-opencode: #7c3aed;
     --app-provider-unknown: var(--app-hint);
 
@@ -95,11 +95,11 @@
     --app-badge-error-text: #fca5a5;
     --app-badge-error-border: rgba(248, 113, 113, 0.35);
 
-    /* Provider colors (dark) */
-    --app-provider-claude: #f59e0b;
-    --app-provider-codex: #4ade80;
-    --app-provider-gemini: #60a5fa;
-    --app-provider-opencode: #c084fc;
+    /* Provider colors (dark) — avoid green/blue (used by status dots) */
+    --app-provider-claude: #c4956a;
+    --app-provider-codex: #5eadb4;
+    --app-provider-gemini: #d4748f;
+    --app-provider-opencode: #a78bfa;
     --app-provider-unknown: var(--app-hint);
 }
 

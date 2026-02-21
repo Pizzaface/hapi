@@ -918,8 +918,9 @@ function SessionItem(props: {
                     <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-0.5 bg-[var(--app-link)]" />
                 ) : null}
                 <div
-                    className={`session-list-item relative z-10 flex w-full select-none ${highlighted ? 'bg-[var(--app-secondary-bg)] border-l-2 border-[var(--app-link)]' : 'bg-[var(--app-bg)]'} ${dragging ? 'opacity-95 ring-2 ring-[var(--app-link)] shadow-[0_4px_12px_rgba(0,0,0,0.15)]' : ''}`}
+                    className={`session-list-item relative z-10 flex w-full select-none border-r-2 ${highlighted ? 'bg-[var(--app-secondary-bg)] border-l-2 border-l-[var(--app-link)]' : 'bg-[var(--app-bg)]'} ${dragging ? 'opacity-95 ring-2 ring-[var(--app-link)] shadow-[0_4px_12px_rgba(0,0,0,0.15)]' : ''}`}
                     style={{
+                        borderRightColor: `var(${providerDisplay.colorVar})`,
                         WebkitTouchCallout: 'none',
                         transform: showSwipeUi && swipeOffset !== 0 ? `translateX(${swipeOffset}px)` : undefined,
                         transition: showSwipeUi ? (isSwiping ? 'none' : 'transform 150ms ease-out') : undefined
@@ -946,7 +947,7 @@ function SessionItem(props: {
                     <button
                         type="button"
                         {...longPressHandlers}
-                        className="flex-1 flex flex-col gap-1.5 px-3 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
+                        className="flex-1 min-w-0 flex flex-col gap-1.5 px-3 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
                         aria-current={selected ? 'page' : undefined}
                         aria-pressed={selectionMode ? selectedForBulk : undefined}
                     >
@@ -1011,11 +1012,9 @@ function SessionItem(props: {
                                     {projectLabel}
                                 </span>
                             ) : null}
-                            <span className="inline-flex items-center gap-1.5">
-                                <ProviderIcon flavor={s.metadata?.flavor} />
-                                <span style={{ color: `var(${providerDisplay.colorVar})` }}>
-                                    {providerDisplay.label}
-                                </span>
+                            <span className="inline-flex items-center gap-1" style={{ color: `var(${providerDisplay.colorVar})` }}>
+                                <ProviderIcon flavor={s.metadata?.flavor} size="sm" />
+                                {providerDisplay.label}
                             </span>
                             <span>{t('session.item.modelMode')}: {s.modelMode || 'default'}</span>
                             {s.metadata?.worktree?.branch ? (
@@ -1025,7 +1024,7 @@ function SessionItem(props: {
                     </button>
                     <button
                         type="button"
-                        className="px-2 flex items-center justify-center text-[var(--app-hint)] hover:text-[var(--app-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
+                        className="px-2 shrink-0 flex items-center justify-center text-[var(--app-hint)] hover:text-[var(--app-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
                         onClick={(e) => {
                             e.stopPropagation()
                             const rect = e.currentTarget.getBoundingClientRect()
