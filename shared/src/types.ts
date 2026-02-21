@@ -14,7 +14,7 @@ export type {
 export type { BeadSummary } from './beads'
 
 export type { SessionSummary, SessionSummaryMetadata, TeamSummary } from './sessionSummary'
-export type { SessionStatusKey, SessionStatusInput } from './sessionStatus'
+export type { SessionStatusKey, SessionStatusInput, TeamAggregateStatusKey, TeamAggregateStatusInput } from './sessionStatus'
 
 export type {
     AgentFlavor,

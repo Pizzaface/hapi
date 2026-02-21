@@ -1,17 +1,15 @@
 import { QueryClient } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { SessionSummary, SessionsResponse } from '@/types/api'
+import type { SessionSummary, SessionsResponse, TeamSummary } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 import {
-    FLAT_DIRECTORY_KEY,
     applyOptimisticSortOrderUpdates,
     applySortOrderUpdatesToSessions,
     buildSortOrderUpdatesForReorder,
-    flattenSessions,
     getClearInactiveCounts,
     getSessionSortOrder,
     getUnreadLabelClass,
-    groupSessionsByDirectory,
+    groupSessions,
     loadSessionReadHistory,
     pruneSessionReadHistory,
     saveSessionReadHistory,
@@ -38,6 +36,16 @@ function makeSession(overrides: Partial<SessionSummary> & { id: string }): Sessi
         ...base,
         ...rest,
         id,
+    }
+}
+
+function makeTeam(overrides: Partial<TeamSummary> & { id: string; name: string }): TeamSummary {
+    return {
+        color: null,
+        persistent: true,
+        sortOrder: null,
+        memberSessionIds: [],
+        ...overrides,
     }
 }
 
@@ -79,43 +87,71 @@ describe('sortSessionsBySortOrder', () => {
     })
 })
 
-describe('group + flat ordering', () => {
-    it('orders groups alphabetically by directory, sessions within group by sortOrder', () => {
+describe('groupSessions', () => {
+    it('groups by directory when no teams', () => {
         const sessions: SessionSummary[] = [
             makeSession({ id: 'a2', sortOrder: 'c', metadata: { path: '/repo-a' } }),
             makeSession({ id: 'a1', sortOrder: 'b', metadata: { path: '/repo-a' } }),
             makeSession({ id: 'b1', sortOrder: 'a', metadata: { path: '/repo-b' } }),
         ]
 
-        const groups = groupSessionsByDirectory(sessions, {})
+        const groups = groupSessions(sessions, [], {})
 
-        expect(groups.map(group => group.directory)).toEqual(['/repo-a', '/repo-b'])
-        expect(groups[0]?.sessions.map(session => session.id)).toEqual(['a1', 'a2'])
+        expect(groups.map(group => group.type)).toEqual(['directory', 'directory'])
+        const dirGroups = groups.filter(g => g.type === 'directory')
+        expect(dirGroups.map(g => g.directory)).toEqual(['/repo-a', '/repo-b'])
+        expect(dirGroups[0]?.sessions.map(session => session.id)).toEqual(['a1', 'a2'])
     })
 
-    it('flat view reorders globally by sortOrder', () => {
+    it('buckets team members into team groups', () => {
         const sessions: SessionSummary[] = [
-            makeSession({ id: 'repo-c', sortOrder: 'm', metadata: { path: '/repo-c' } }),
-            makeSession({ id: 'repo-a', sortOrder: 'a', metadata: { path: '/repo-a' } }),
-            makeSession({ id: 'repo-b', sortOrder: 'k', metadata: { path: '/repo-b' } }),
+            makeSession({ id: 's1', sortOrder: 'a', metadata: { path: '/repo-a' } }),
+            makeSession({ id: 's2', sortOrder: 'b', metadata: { path: '/repo-a' } }),
+            makeSession({ id: 's3', sortOrder: 'c', metadata: { path: '/repo-b' } }),
+        ]
+        const teams: TeamSummary[] = [
+            makeTeam({ id: 't1', name: 'Team Alpha', memberSessionIds: ['s1', 's2'] }),
         ]
 
-        const groups = flattenSessions(sessions, {})
+        const groups = groupSessions(sessions, teams, {})
 
-        expect(groups).toHaveLength(1)
-        expect(groups[0]?.directory).toBe(FLAT_DIRECTORY_KEY)
-        expect(groups[0]?.sessions.map(session => session.id)).toEqual(['repo-a', 'repo-b', 'repo-c'])
+        expect(groups).toHaveLength(2)
+        expect(groups[0]?.type).toBe('team')
+        if (groups[0]?.type === 'team') {
+            expect(groups[0].teamName).toBe('Team Alpha')
+            expect(groups[0].sessions.map(s => s.id)).toEqual(['s1', 's2'])
+        }
+        expect(groups[1]?.type).toBe('directory')
+        if (groups[1]?.type === 'directory') {
+            expect(groups[1].sessions.map(s => s.id)).toEqual(['s3'])
+        }
     })
 
-    it('orders groups alphabetically regardless of session sortOrder', () => {
+    it('sorts team groups before directory groups', () => {
+        const sessions: SessionSummary[] = [
+            makeSession({ id: 's1', metadata: { path: '/aaa' } }),
+            makeSession({ id: 's2', metadata: { path: '/bbb' } }),
+        ]
+        const teams: TeamSummary[] = [
+            makeTeam({ id: 't1', name: 'Zeta Team', memberSessionIds: ['s2'] }),
+        ]
+
+        const groups = groupSessions(sessions, teams, {})
+
+        expect(groups[0]?.type).toBe('team')
+        expect(groups[1]?.type).toBe('directory')
+    })
+
+    it('orders directory groups alphabetically regardless of session sortOrder', () => {
         const sessions: SessionSummary[] = [
             makeSession({ id: 'lower', sortOrder: 'a', metadata: { path: '/repo-lower' } }),
             makeSession({ id: 'upper', sortOrder: 'Z', metadata: { path: '/repo-upper' } }),
         ]
 
-        const groups = groupSessionsByDirectory(sessions, {})
+        const groups = groupSessions(sessions, [], {})
+        const dirGroups = groups.filter(g => g.type === 'directory')
 
-        expect(groups.map(group => group.directory)).toEqual(['/repo-lower', '/repo-upper'])
+        expect(dirGroups.map(g => g.directory)).toEqual(['/repo-lower', '/repo-upper'])
     })
 
     it('sorts Other group last', () => {
@@ -125,9 +161,10 @@ describe('group + flat ordering', () => {
             makeSession({ id: 'a1', sortOrder: 'c', metadata: { path: '/alpha' } }),
         ]
 
-        const groups = groupSessionsByDirectory(sessions, {})
+        const groups = groupSessions(sessions, [], {})
+        const dirGroups = groups.filter(g => g.type === 'directory')
 
-        expect(groups.map(group => group.directory)).toEqual(['/alpha', '/zoo', 'Other'])
+        expect(dirGroups.map(g => g.directory)).toEqual(['/alpha', '/zoo', 'Other'])
     })
 })
 

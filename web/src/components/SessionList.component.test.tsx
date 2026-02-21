@@ -2,7 +2,7 @@ import type { ComponentProps, ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { SessionSummary } from '@/types/api'
+import type { SessionSummary, TeamSummary } from '@/types/api'
 import { I18nProvider } from '@/lib/i18n-context'
 import { SessionList } from './SessionList'
 
@@ -83,6 +83,7 @@ function renderSessionList(props: SessionListProps) {
 function buildProps(overrides: Partial<SessionListProps> = {}): SessionListProps {
     return {
         sessions: [],
+        teams: [],
         onSelect: vi.fn(),
         onNewSession: vi.fn(),
         onRefresh: vi.fn(),
@@ -146,23 +147,7 @@ describe('SessionList ordering + DnD UI', () => {
         }
     })
 
-    it('flat mode orders globally by sortOrder', () => {
-        const sessions = [
-            makeSession({ id: 'c', sortOrder: 'c', metadata: { path: '/repo-c' } }),
-            makeSession({ id: 'a', sortOrder: 'a', metadata: { path: '/repo-a' } }),
-            makeSession({ id: 'b', sortOrder: 'b', metadata: { path: '/repo-b' } }),
-        ]
-
-        const view = renderSessionList(buildProps({
-            sessions,
-            view: 'flat'
-        }))
-
-        expect(getRenderedSessionOrder(view.container)).toEqual(['a', 'b', 'c'])
-        expect(view.container.querySelectorAll('[data-group-header]')).toHaveLength(0)
-    })
-
-    it('grouped mode orders groups alphabetically, sessions within group by sortOrder', () => {
+    it('orders groups alphabetically, sessions within group by sortOrder', () => {
         const sessions = [
             makeSession({ id: 'g1-b', sortOrder: 'd', metadata: { path: '/group-one' }, active: true }),
             makeSession({ id: 'g1-a', sortOrder: 'c', metadata: { path: '/group-one' } }),
@@ -171,7 +156,6 @@ describe('SessionList ordering + DnD UI', () => {
 
         const view = renderSessionList(buildProps({
             sessions,
-            view: 'grouped'
         }))
 
         const groupHeaders = Array.from(view.container.querySelectorAll<HTMLElement>('[data-group-header]'))
@@ -183,11 +167,11 @@ describe('SessionList ordering + DnD UI', () => {
 
     it('renders always-visible drag handles with aria labels + instructions', () => {
         const sessions = [
-            makeSession({ id: 'alpha', sortOrder: 'a', metadata: { path: '/repo-a', name: 'Alpha' } }),
-            makeSession({ id: 'beta', sortOrder: 'b', metadata: { path: '/repo-b', name: 'Beta' } }),
+            makeSession({ id: 'alpha', sortOrder: 'a', metadata: { path: '/repo', name: 'Alpha' }, active: true }),
+            makeSession({ id: 'beta', sortOrder: 'b', metadata: { path: '/repo', name: 'Beta' }, active: true }),
         ]
 
-        const view = renderSessionList(buildProps({ sessions, view: 'flat' }))
+        const view = renderSessionList(buildProps({ sessions }))
 
         const handleButtons = view.container.querySelectorAll<HTMLButtonElement>('[data-drag-handle]')
         expect(handleButtons).toHaveLength(2)
@@ -200,11 +184,11 @@ describe('SessionList ordering + DnD UI', () => {
 
     it('disables dnd handles in selection mode', async () => {
         const sessions = [
-            makeSession({ id: 'alpha', sortOrder: 'a', metadata: { path: '/repo-a', name: 'Alpha' } }),
-            makeSession({ id: 'beta', sortOrder: 'b', metadata: { path: '/repo-b', name: 'Beta' } }),
+            makeSession({ id: 'alpha', sortOrder: 'a', metadata: { path: '/repo', name: 'Alpha' }, active: true }),
+            makeSession({ id: 'beta', sortOrder: 'b', metadata: { path: '/repo', name: 'Beta' }, active: true }),
         ]
 
-        const view = renderSessionList(buildProps({ sessions, view: 'flat' }))
+        const view = renderSessionList(buildProps({ sessions }))
 
         fireEvent.click(getSelectionModeButton(view.container))
 
@@ -225,12 +209,13 @@ describe('SessionList provider rendering', () => {
         const sessions = [
             makeSession({
                 id: 'claude-session',
+                active: true,
                 metadata: { path: '/repo-a', flavor: 'claude' },
                 updatedAt: 100
             })
         ]
 
-        const view = renderSessionList(buildProps({ sessions, view: 'flat' }))
+        const view = renderSessionList(buildProps({ sessions }))
         const sessionRow = view.container.querySelector<HTMLElement>('[data-session-id="claude-session"]')
 
         expect(sessionRow?.querySelector('[data-provider-key="claude"]')).toBeInTheDocument()
@@ -241,12 +226,13 @@ describe('SessionList provider rendering', () => {
         const sessions = [
             makeSession({
                 id: 'unknown-session',
+                active: true,
                 metadata: { path: '/repo-a' },
                 updatedAt: 100
             })
         ]
 
-        const view = renderSessionList(buildProps({ sessions, view: 'flat' }))
+        const view = renderSessionList(buildProps({ sessions }))
         const sessionRow = view.container.querySelector<HTMLElement>('[data-session-id="unknown-session"]')
 
         expect(sessionRow?.querySelector('[data-provider-key="unknown"]')).toBeInTheDocument()

@@ -20,8 +20,8 @@ import { LoadingState } from '@/components/LoadingState'
 import { useAppContext } from '@/lib/app-context'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { isTelegramApp } from '@/hooks/useTelegram'
-import { useSessionListView } from '@/hooks/useSessionListView'
 import { useSessionFilter } from '@/hooks/useSessionFilter'
+import { useTeams } from '@/hooks/queries/useTeams'
 import { useMessages } from '@/hooks/queries/useMessages'
 import { useMachines } from '@/hooks/queries/useMachines'
 import { useSession } from '@/hooks/queries/useSession'
@@ -206,13 +206,12 @@ function EyeOffIcon(props: { className?: string }) {
 
 function SessionListPanel(props: {
     sessions: ReturnType<typeof useSessions>['sessions']
+    teams: ReturnType<typeof useTeams>['teams']
     selectedSessionId: string | null
     isLoading: boolean
     error: string | null
     machineNames: Map<string, string>
     systemStats: ReturnType<typeof useSystemStats>['stats']
-    view: ReturnType<typeof useSessionListView>['view']
-    toggleView: () => void
     hideInactive: boolean
     onToggleHideInactive: () => void
     onRefresh: () => void
@@ -223,30 +222,13 @@ function SessionListPanel(props: {
 }) {
     const { t } = useTranslation()
     const navigate = useNavigate()
-    const { sessions, selectedSessionId, isLoading, error, machineNames, systemStats, view, toggleView, hideInactive, onToggleHideInactive, onRefresh, onSelect, onNewSession, scrollContainerRef, api } = props
-
-    const displaySessions = hideInactive ? sessions.filter(s => s.active) : sessions
-    const projectCount = new Set(
-        displaySessions.map((session) => {
-            const directory = session.metadata?.worktree?.basePath ?? session.metadata?.path ?? 'Other'
-            const machineId = session.metadata?.machineId ?? 'unknown-machine'
-            return `${machineId}::${directory}`
-        })
-    ).size
+    const { sessions, teams, selectedSessionId, isLoading, error, machineNames, systemStats, hideInactive, onToggleHideInactive, onRefresh, onSelect, onNewSession, scrollContainerRef, api } = props
 
     return (
         <>
             <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
                 <div className="mx-auto w-full max-w-content flex items-center justify-between px-3 py-2">
-                    <div className="text-xs text-[var(--app-hint)]">
-                        {hideInactive
-                            ? (view === 'flat'
-                                ? t('sessions.countActiveFlat', { n: displaySessions.length })
-                                : t('sessions.countActive', { n: displaySessions.length, m: projectCount }))
-                            : (view === 'flat'
-                                ? t('sessions.countFlat', { n: sessions.length })
-                                : t('sessions.count', { n: sessions.length, m: projectCount }))}
-                    </div>
+                    <div className="text-xs text-[var(--app-hint)]" />
                     <div className="flex items-center gap-2">
                         {sessions.length > 0 ? (
                             <button
@@ -286,6 +268,7 @@ function SessionListPanel(props: {
                 ) : null}
                 <SessionList
                     sessions={sessions}
+                    teams={teams}
                     hideInactive={hideInactive}
                     selectedSessionId={selectedSessionId}
                     scrollContainerRef={scrollContainerRef}
@@ -296,8 +279,6 @@ function SessionListPanel(props: {
                     isLoading={isLoading}
                     renderHeader={false}
                     api={api}
-                    view={view}
-                    onToggleView={toggleView}
                 />
             </div>
 
@@ -314,7 +295,7 @@ function SessionsPage() {
     const { t } = useTranslation()
     const { sessions, isLoading, error, refetch } = useSessions(api)
     const { stats: systemStats } = useSystemStats(api)
-    const { view, toggleView } = useSessionListView()
+    const { teams } = useTeams(api)
     const { hideInactive, toggleHideInactive } = useSessionFilter()
     const scrollContainerRef = useRef<HTMLDivElement>(null)
     const { width: sidebarWidth, handleResizeStart } = useSidebarResize()
@@ -376,13 +357,12 @@ function SessionsPage() {
 
     const listPanelProps = {
         sessions,
+        teams,
         selectedSessionId,
         isLoading,
         error,
         machineNames,
         systemStats,
-        view,
-        toggleView,
         hideInactive,
         onToggleHideInactive: toggleHideInactive,
         onRefresh: handleRefresh,

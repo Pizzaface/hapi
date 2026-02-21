@@ -39,16 +39,21 @@ export default {
   'login.footer.copyright': '©',
 
   // Sessions page
-  'sessions.count': '{n} 个会话，{m} 个项目',
-  'sessions.countFlat': '{n} 个会话',
-  'sessions.countActive': '{n} 个活跃会话，{m} 个项目',
-  'sessions.countActiveFlat': '{n} 个活跃会话',
+  'sessions.count': '{n} 个会话，{m} 个分组',
+  'sessions.countActive': '{n} 个活跃会话，{m} 个分组',
   'sessions.showInactive': '显示非活跃会话',
   'sessions.hideInactive': '隐藏非活跃会话',
   'sessions.emptyInactive': '所有会话均为非活跃状态。点击眼睛图标以查看。',
-  'sessions.view.flat': '列表',
-  'sessions.view.grouped': '分组',
   'sessions.new': '新建会话',
+
+  // Team grouping
+  'team.status.needsInput': '需要输入',
+  'team.status.error': '错误',
+  'team.status.thinking': '思考中',
+  'team.status.working': '运行中',
+  'team.status.offline': '离线',
+  'team.spawn': '在团队中创建会话',
+  'team.parentBadge': '{name} 的子会话',
 
   // Session list
   'session.item.path': '路径',

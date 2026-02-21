@@ -39,16 +39,21 @@ export default {
   'login.footer.copyright': '©',
 
   // Sessions page
-  'sessions.count': '{n} sessions in {m} projects',
-  'sessions.countFlat': '{n} sessions',
-  'sessions.countActive': '{n} active in {m} projects',
-  'sessions.countActiveFlat': '{n} active',
+  'sessions.count': '{n} sessions in {m} groups',
+  'sessions.countActive': '{n} active in {m} groups',
   'sessions.showInactive': 'Show inactive sessions',
   'sessions.hideInactive': 'Hide inactive sessions',
   'sessions.emptyInactive': 'All sessions are inactive. Tap the eye icon to show them.',
-  'sessions.view.flat': 'Flat',
-  'sessions.view.grouped': 'Grouped',
   'sessions.new': 'New Session',
+
+  // Team grouping
+  'team.status.needsInput': 'needs input',
+  'team.status.error': 'error',
+  'team.status.thinking': 'thinking',
+  'team.status.working': 'working',
+  'team.status.offline': 'offline',
+  'team.spawn': 'Spawn session in team',
+  'team.parentBadge': 'child of {name}',
 
   // Session list
   'session.item.path': 'path',

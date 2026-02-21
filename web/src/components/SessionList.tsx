@@ -24,7 +24,8 @@ import { useSwipeable, type SwipeEventData } from 'react-swipeable'
 import type {
     ClearInactiveSessionsOlderThan,
     SessionSummary,
-    SessionsResponse
+    SessionsResponse,
+    TeamSummary
 } from '@/types/api'
 import type { ApiClient } from '@/api/client'
 import { useLongPress } from '@/hooks/useLongPress'
@@ -40,14 +41,16 @@ import { SessionActionMenu } from '@/components/SessionActionMenu'
 import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { clearMessageWindow } from '@/lib/message-window-store'
-import { deriveSessionStatus } from '@hapi/protocol'
+import { deriveSessionStatus, deriveTeamAggregateStatus } from '@hapi/protocol'
 import { resolveProvider } from '@/lib/providerTheme'
 import { queryKeys } from '@/lib/query-keys'
 import { getSessionStatusDisplay } from '@/lib/sessionStatusDisplay'
+import { getTeamAggregateStatusDisplay } from '@/lib/teamStatusDisplay'
 import { useTranslation } from '@/lib/use-translation'
 import { ProviderIcon } from './ProviderIcon'
 
 const SESSION_READ_HISTORY_KEY = 'hapi:sessionReadHistory'
+const COLLAPSE_OVERRIDES_KEY = 'hapi:collapseOverrides'
 const DAY_MS = 24 * 60 * 60 * 1000
 
 export type ClearInactiveCounts = {
@@ -92,10 +95,8 @@ export function getClearInactiveCounts(sessions: SessionSummary[], now: number =
     }
 }
 
-type SessionGroup = {
+type SessionGroupBase = {
     key: string
-    directory: string
-    machineId: string | null
     displayName: string
     sessions: SessionSummary[]
     minSortOrder: string | null
@@ -103,6 +104,23 @@ type SessionGroup = {
     latestReadAt: number
     hasActiveSession: boolean
 }
+
+export type TeamGroup = SessionGroupBase & {
+    type: 'team'
+    teamId: string
+    teamName: string
+    teamColor: string | null
+    teamPersistent: boolean
+    teamSortOrder: string | null
+}
+
+export type DirectoryGroup = SessionGroupBase & {
+    type: 'directory'
+    directory: string
+    machineId: string | null
+}
+
+export type SessionGroup = TeamGroup | DirectoryGroup
 
 export type SessionReadHistory = Record<string, number>
 
@@ -216,60 +234,121 @@ function getSessionGroupKey(directory: string, machineId: string | null): string
     return `${machineId ?? 'unknown-machine'}::${directory}`
 }
 
-export function groupSessionsByDirectory(
-    sessions: SessionSummary[],
-    readHistory: SessionReadHistory,
-    _unreadSessionIds: Set<string> = new Set(),
-    _now: number = Date.now()
-): SessionGroup[] {
-    const groups = new Map<string, { directory: string; machineId: string | null; sessions: SessionSummary[] }>()
+function computeGroupStats(sessions: SessionSummary[], readHistory: SessionReadHistory): {
+    minSortOrder: string | null
+    latestUpdatedAt: number
+    latestReadAt: number
+    hasActiveSession: boolean
+} {
+    let minSortOrder: string | null = null
+    let latestUpdatedAt = -Infinity
+    let latestReadAt = -Infinity
+    let hasActiveSession = false
 
-    sessions.forEach(session => {
-        const directory = getSessionDirectory(session)
-        const machineId = getSessionMachineId(session)
-        const key = getSessionGroupKey(directory, machineId)
-
-        if (!groups.has(key)) {
-            groups.set(key, {
-                directory,
-                machineId,
-                sessions: []
-            })
+    for (const session of sessions) {
+        const so = getSessionSortOrder(session)
+        if (so !== null && (minSortOrder === null || so < minSortOrder)) {
+            minSortOrder = so
         }
-        groups.get(key)!.sessions.push(session)
-    })
+        if (session.updatedAt > latestUpdatedAt) {
+            latestUpdatedAt = session.updatedAt
+        }
+        const readAt = readHistory[session.id]
+        if (readAt !== undefined && readAt > latestReadAt) {
+            latestReadAt = readAt
+        }
+        if (session.active) {
+            hasActiveSession = true
+        }
+    }
 
-    return Array.from(groups.entries())
+    return { minSortOrder, latestUpdatedAt, latestReadAt, hasActiveSession }
+}
+
+export function groupSessions(
+    sessions: SessionSummary[],
+    teams: TeamSummary[],
+    readHistory: SessionReadHistory,
+): SessionGroup[] {
+    // Build sessionId → teamId lookup
+    const sessionTeamMap = new Map<string, string>()
+    const teamById = new Map<string, TeamSummary>()
+    for (const team of teams) {
+        teamById.set(team.id, team)
+        for (const sessionId of team.memberSessionIds) {
+            sessionTeamMap.set(sessionId, team.id)
+        }
+    }
+
+    // Bucket sessions
+    const teamBuckets = new Map<string, SessionSummary[]>()
+    const dirBuckets = new Map<string, { directory: string; machineId: string | null; sessions: SessionSummary[] }>()
+
+    for (const session of sessions) {
+        const teamId = sessionTeamMap.get(session.id)
+        if (teamId) {
+            if (!teamBuckets.has(teamId)) {
+                teamBuckets.set(teamId, [])
+            }
+            teamBuckets.get(teamId)!.push(session)
+        } else {
+            const directory = getSessionDirectory(session)
+            const machineId = getSessionMachineId(session)
+            const key = getSessionGroupKey(directory, machineId)
+            if (!dirBuckets.has(key)) {
+                dirBuckets.set(key, { directory, machineId, sessions: [] })
+            }
+            dirBuckets.get(key)!.sessions.push(session)
+        }
+    }
+
+    const result: SessionGroup[] = []
+
+    // Team groups — sorted by team sort_order, then name
+    const teamEntries = Array.from(teamBuckets.entries())
+        .map(([teamId, teamSessions]) => {
+            const team = teamById.get(teamId)!
+            return { teamId, team, sessions: teamSessions }
+        })
+        .sort((a, b) => {
+            if (a.team.sortOrder !== null && b.team.sortOrder !== null) {
+                return a.team.sortOrder < b.team.sortOrder ? -1 : a.team.sortOrder > b.team.sortOrder ? 1 : 0
+            }
+            if (a.team.sortOrder !== null) return -1
+            if (b.team.sortOrder !== null) return 1
+            return a.team.name.localeCompare(b.team.name)
+        })
+
+    for (const { teamId, team, sessions: teamSessions } of teamEntries) {
+        const sorted = sortSessionsBySortOrder(teamSessions)
+        const stats = computeGroupStats(sorted, readHistory)
+        result.push({
+            type: 'team',
+            key: `team:${teamId}`,
+            teamId,
+            teamName: team.name,
+            teamColor: team.color,
+            teamPersistent: team.persistent,
+            teamSortOrder: team.sortOrder,
+            displayName: team.name,
+            sessions: sorted,
+            ...stats,
+        })
+    }
+
+    // Directory groups — sorted alphabetically, "Other" last
+    const dirEntries = Array.from(dirBuckets.entries())
         .map(([key, group]) => {
-            const sortedSessions = sortSessionsBySortOrder(group.sessions)
-            const minSortOrder = sortedSessions.reduce<string | null>((min, session) => {
-                const sortOrder = getSessionSortOrder(session)
-                if (sortOrder === null) return min
-                if (min === null || sortOrder < min) return sortOrder
-                return min
-            }, null)
-
-            const latestUpdatedAt = group.sessions.reduce(
-                (max, s) => (s.updatedAt > max ? s.updatedAt : max),
-                -Infinity
-            )
-            const latestReadAt = group.sessions.reduce(
-                (max, s) => (readHistory[s.id] && readHistory[s.id] > max ? readHistory[s.id] : max),
-                -Infinity
-            )
-            const hasActiveSession = group.sessions.some(s => s.active)
-            const displayName = getGroupDisplayName(group.directory)
-
+            const sorted = sortSessionsBySortOrder(group.sessions)
+            const stats = computeGroupStats(sorted, readHistory)
             return {
+                type: 'directory' as const,
                 key,
                 directory: group.directory,
                 machineId: group.machineId,
-                displayName,
-                sessions: sortedSessions,
-                minSortOrder,
-                latestUpdatedAt,
-                latestReadAt,
-                hasActiveSession
+                displayName: getGroupDisplayName(group.directory),
+                sessions: sorted,
+                ...stats,
             }
         })
         .sort((a, b) => {
@@ -282,37 +361,9 @@ export function groupSessionsByDirectory(
 
             return (a.machineId ?? '').localeCompare(b.machineId ?? '')
         })
-}
 
-export const FLAT_DIRECTORY_KEY = '__hapi_flat__'
-
-export function flattenSessions(
-    sessions: SessionSummary[],
-    readHistory: SessionReadHistory,
-    _unreadSessionIds: Set<string> = new Set(),
-    _now: number = Date.now()
-): SessionGroup[] {
-    if (sessions.length === 0) return []
-
-    const sortedSessions = sortSessionsBySortOrder(sessions)
-    const minSortOrder = sortedSessions.reduce<string | null>((min, session) => {
-        const sortOrder = getSessionSortOrder(session)
-        if (sortOrder === null) return min
-        if (min === null || sortOrder < min) return sortOrder
-        return min
-    }, null)
-
-    return [{
-        key: FLAT_DIRECTORY_KEY,
-        directory: FLAT_DIRECTORY_KEY,
-        machineId: null,
-        displayName: '',
-        sessions: sortedSessions,
-        minSortOrder,
-        latestUpdatedAt: sessions.reduce((max, s) => Math.max(max, s.updatedAt), -Infinity),
-        latestReadAt: sessions.reduce((max, s) => Math.max(max, readHistory[s.id] ?? -Infinity), -Infinity),
-        hasActiveSession: sessions.some(s => s.active)
-    }]
+    result.push(...dirEntries)
+    return result
 }
 
 export function buildSortOrderUpdatesForReorder(
@@ -439,90 +490,6 @@ export function getSessionIdHash(sessions: SessionSummary[]): string {
     return sessions.map(s => s.id).sort().join('\0')
 }
 
-export type FreezeState = {
-    frozenGroups: SessionGroup[] | null
-    prevSelectedSessionId: string | null
-    prevSessionIdHash: string
-    prevViewKey: string
-    unfreezeCount: number
-    selectionFreezeArmed: boolean
-}
-
-export function computeFreezeStep(
-    state: FreezeState,
-    liveGroups: SessionGroup[],
-    selectedSessionId: string | null | undefined,
-    sessions: SessionSummary[],
-    viewKey: 'grouped' | 'flat'
-): FreezeState & { displayGroups: SessionGroup[] } {
-    const normalizedSelectedSessionId = selectedSessionId ?? null
-    const prevSelectedSessionId = state.prevSelectedSessionId ?? null
-    const selectionChanged = normalizedSelectedSessionId !== prevSelectedSessionId
-    const sessionIdHash = getSessionIdHash(sessions)
-    const sessionsChanged = sessionIdHash !== state.prevSessionIdHash
-    const viewChanged = viewKey !== state.prevViewKey
-
-    let frozenGroups = state.frozenGroups
-    let unfreezeCount = state.unfreezeCount
-    let selectionFreezeArmed = state.selectionFreezeArmed
-
-    // Freeze strategy:
-    // - While a session is selected, keep list order frozen to prevent selection-induced jumps.
-    // - Patch visuals in-place so status badges/timestamps still update.
-    // - Release freeze only on deselect, view change, or session ID set changes.
-    const isDeselecting = selectionChanged && normalizedSelectedSessionId === null
-    const shouldForceUnfreeze = sessionsChanged || isDeselecting || viewChanged
-
-    if (!frozenGroups) {
-        frozenGroups = liveGroups
-    }
-
-    if (shouldForceUnfreeze) {
-        frozenGroups = liveGroups
-        unfreezeCount += 1
-        selectionFreezeArmed = false
-    } else if (normalizedSelectedSessionId !== null) {
-        frozenGroups = patchGroupsVisuals(frozenGroups, sessions)
-        selectionFreezeArmed = true
-    } else {
-        frozenGroups = liveGroups
-        selectionFreezeArmed = false
-    }
-
-    return {
-        frozenGroups,
-        prevSelectedSessionId: normalizedSelectedSessionId,
-        prevSessionIdHash: sessionIdHash,
-        prevViewKey: viewKey,
-        unfreezeCount,
-        selectionFreezeArmed,
-        displayGroups: frozenGroups
-    }
-}
-
-function useFrozenGroups(
-    liveGroups: SessionGroup[],
-    selectedSessionId: string | null | undefined,
-    sessions: SessionSummary[],
-    viewKey: 'grouped' | 'flat'
-): { displayGroups: SessionGroup[] } {
-    const stateRef = useRef<FreezeState>({
-        frozenGroups: null,
-        prevSelectedSessionId: null,
-        prevSessionIdHash: getSessionIdHash(sessions),
-        prevViewKey: viewKey,
-        unfreezeCount: 0,
-        selectionFreezeArmed: false
-    })
-
-    const result = computeFreezeStep(stateRef.current, liveGroups, selectedSessionId, sessions, viewKey)
-    stateRef.current = result
-
-    return {
-        displayGroups: result.displayGroups
-    }
-}
-
 function PlusIcon(props: { className?: string }) {
     return (
         <svg
@@ -581,29 +548,6 @@ function BulbIcon(props: { className?: string }) {
             <path d="M9 18h6" />
             <path d="M10 22h4" />
             <path d="M12 2a7 7 0 0 0-4 12c.6.6 1 1.2 1 2h6c0-.8.4-1.4 1-2a7 7 0 0 0-4-12Z" />
-        </svg>
-    )
-}
-
-function TrashIcon(props: { className?: string }) {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={props.className}
-        >
-            <path d="M3 6h18" />
-            <path d="M8 6V4h8v2" />
-            <path d="M6 6l1 14h10l1-14" />
-            <path d="M10 11v6" />
-            <path d="M14 11v6" />
         </svg>
     )
 }
@@ -670,7 +614,30 @@ function GripVerticalIcon(props: { className?: string }) {
     )
 }
 
-function getSessionTitle(session: SessionSummary): string {
+function DoorOpenIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <path d="M13 4h3a2 2 0 0 1 2 2v14" />
+            <path d="M2 20h3" />
+            <path d="M13 20h9" />
+            <path d="M10 12v.01" />
+            <path d="M13 4.562v16.157a1 1 0 0 1-1.242.97L5 20V5.562a2 2 0 0 1 1.515-1.94l4-1A2 2 0 0 1 13 4.561Z" />
+        </svg>
+    )
+}
+
+export function getSessionTitle(session: SessionSummary): string {
     if (session.metadata?.name) {
         return session.metadata.name
     }
@@ -690,7 +657,7 @@ function getTodoProgress(session: SessionSummary): { completed: number; total: n
     return session.todoProgress
 }
 
-function formatRelativeTime(value: number, t: (key: string, params?: Record<string, string | number>) => string): string | null {
+export function formatRelativeTime(value: number, t: (key: string, params?: Record<string, string | number>) => string): string | null {
     const ms = normalizeTimestamp(value)
     if (!Number.isFinite(ms)) return null
     const delta = Date.now() - ms
@@ -710,12 +677,39 @@ export function getUnreadLabelClass(thinking: boolean): string {
         : 'text-[var(--app-badge-warning-text)]'
 }
 
+function loadCollapseOverrides(): Map<string, boolean> {
+    if (typeof window === 'undefined') return new Map()
+    try {
+        const raw = localStorage.getItem(COLLAPSE_OVERRIDES_KEY)
+        if (!raw) return new Map()
+        const parsed = JSON.parse(raw) as Record<string, boolean>
+        return new Map(Object.entries(parsed))
+    } catch {
+        return new Map()
+    }
+}
+
+function saveCollapseOverrides(overrides: Map<string, boolean>): void {
+    if (typeof window === 'undefined') return
+    try {
+        if (overrides.size === 0) {
+            localStorage.removeItem(COLLAPSE_OVERRIDES_KEY)
+        } else {
+            localStorage.setItem(COLLAPSE_OVERRIDES_KEY, JSON.stringify(Object.fromEntries(overrides)))
+        }
+    } catch {
+        // best-effort
+    }
+}
+
 function SessionItem(props: {
     session: SessionSummary
     onSelect: (sessionId: string) => void
     onToggleSelected: (sessionId: string) => void
     showPath?: boolean
     projectLabel?: string
+    parentLabel?: string
+    indentLevel?: number
     api: ApiClient | null
     selected?: boolean
     selectionMode: boolean
@@ -735,6 +729,8 @@ function SessionItem(props: {
         onToggleSelected,
         showPath = true,
         projectLabel,
+        parentLabel,
+        indentLevel = 0,
         api,
         selected = false,
         selectionMode,
@@ -903,7 +899,7 @@ function SessionItem(props: {
                 {...(isTouch && !selectionMode && !disableGestureActions ? swipeHandlers : {})}
                 onWheel={enableTrackpadSwipe && !selectionMode && !disableGestureActions ? handleTrackpadWheel : undefined}
                 className="relative isolate overflow-hidden group"
-                style={{ touchAction: 'pan-y' }}
+                style={{ touchAction: 'pan-y', paddingLeft: indentLevel > 0 ? `${indentLevel * 1.5}rem` : undefined }}
             >
                 {showSwipeUi && !selectionMode && !disableGestureActions ? (
                     <div
@@ -970,6 +966,9 @@ function SessionItem(props: {
                                 <div className={`truncate text-base font-medium${!s.active ? ' text-[var(--app-hint)]' : ''}`}>
                                     {sessionName}
                                 </div>
+                                {s.acceptAllMessages ? (
+                                    <DoorOpenIcon className="h-3.5 w-3.5 shrink-0 text-[var(--app-hint)]" />
+                                ) : null}
                             </div>
                             <div className="flex items-center gap-2 shrink-0 text-xs">
                                 {statusDisplay.i18nKey ? (
@@ -1008,6 +1007,11 @@ function SessionItem(props: {
                             {projectLabel ? (
                                 <span className="truncate max-w-[160px]" title={projectLabel} data-session-project-label>
                                     {projectLabel}
+                                </span>
+                            ) : null}
+                            {parentLabel ? (
+                                <span className="truncate max-w-[160px] italic" data-session-parent-label>
+                                    {parentLabel}
                                 </span>
                             ) : null}
                             <span className="inline-flex items-center gap-1" style={{ color: `var(${providerDisplay.colorVar})` }}>
@@ -1123,8 +1127,124 @@ function SortableSessionItem(
     )
 }
 
+function buildParentChildTree(sessions: SessionSummary[]): { roots: SessionSummary[]; childrenOf: Map<string, SessionSummary[]> } {
+    const sessionIds = new Set(sessions.map(s => s.id))
+    const childrenOf = new Map<string, SessionSummary[]>()
+    const roots: SessionSummary[] = []
+
+    for (const session of sessions) {
+        const parentId = session.parentSessionId
+        if (parentId && sessionIds.has(parentId)) {
+            if (!childrenOf.has(parentId)) {
+                childrenOf.set(parentId, [])
+            }
+            childrenOf.get(parentId)!.push(session)
+        } else {
+            roots.push(session)
+        }
+    }
+
+    return { roots, childrenOf }
+}
+
+function flattenTree(
+    roots: SessionSummary[],
+    childrenOf: Map<string, SessionSummary[]>,
+    sessionTitleMap: Map<string, string>,
+    isTouch: boolean
+): Array<{ session: SessionSummary; indentLevel: number; parentLabel?: string }> {
+    const result: Array<{ session: SessionSummary; indentLevel: number; parentLabel?: string }> = []
+
+    function visit(session: SessionSummary, depth: number, parentName?: string) {
+        result.push({
+            session,
+            indentLevel: isTouch ? 0 : depth,
+            parentLabel: depth > 0 && isTouch ? parentName : undefined
+        })
+        const children = childrenOf.get(session.id)
+        if (children) {
+            const name = sessionTitleMap.get(session.id) ?? session.id.slice(0, 8)
+            for (const child of children) {
+                visit(child, depth + 1, name)
+            }
+        }
+    }
+
+    for (const root of roots) {
+        visit(root, 0)
+    }
+
+    return result
+}
+
+function TeamGroupHeader(props: {
+    group: TeamGroup
+    isCollapsed: boolean
+    onToggle: () => void
+    onSpawn?: () => void
+    unreadCount: number
+    t: (key: string, params?: Record<string, string | number>) => string
+}) {
+    const { group, isCollapsed, onToggle, onSpawn, unreadCount, t } = props
+    const aggregateStatus = deriveTeamAggregateStatus(group.sessions)
+    const statusDisplay = getTeamAggregateStatusDisplay(aggregateStatus)
+    const borderColor = group.teamColor ?? 'var(--app-link)'
+
+    return (
+        <div
+            data-group-header={group.teamName}
+            className="sticky top-0 z-10 flex items-center gap-1 border-b border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-3 py-2"
+            style={{ borderLeftWidth: '3px', borderLeftColor: borderColor }}
+        >
+            <button
+                type="button"
+                onClick={onToggle}
+                className="flex min-w-0 flex-1 items-center gap-2 text-left transition-colors hover:bg-[var(--app-secondary-bg)]"
+                aria-expanded={!isCollapsed}
+            >
+                <ChevronIcon
+                    className="h-4 w-4 text-[var(--app-hint)]"
+                    collapsed={isCollapsed}
+                />
+                <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                        <span className="font-medium text-base break-words" title={group.teamName}>
+                            {group.teamName}
+                        </span>
+                        <span className="shrink-0 text-xs text-[var(--app-hint)]">
+                            ({group.sessions.length})
+                        </span>
+                        {statusDisplay.i18nKey ? (
+                            <span className={`shrink-0 text-xs ${statusDisplay.labelClass}${statusDisplay.animate ? ' animate-pulse' : ''}`}>
+                                {t(statusDisplay.i18nKey)}
+                            </span>
+                        ) : null}
+                        {unreadCount > 0 ? (
+                            <span className="shrink-0 text-xs text-[var(--app-badge-warning-text)]">
+                                {unreadCount} {t('session.item.unread')}
+                            </span>
+                        ) : null}
+                    </div>
+                </div>
+            </button>
+            {onSpawn ? (
+                <button
+                    type="button"
+                    onClick={onSpawn}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[var(--app-link)] opacity-0 group-hover/team:opacity-100 focus:opacity-100 transition-opacity hover:bg-[var(--app-subtle-bg)]"
+                    title={t('team.spawn')}
+                    aria-label={t('team.spawn')}
+                >
+                    <PlusIcon className="h-4 w-4" />
+                </button>
+            ) : null}
+        </div>
+    )
+}
+
 export function SessionList(props: {
     sessions: SessionSummary[]
+    teams: TeamSummary[]
     hideInactive?: boolean
     onSelect: (sessionId: string) => void
     onNewSession: (opts?: { directory?: string; machineId?: string }) => void
@@ -1135,10 +1255,9 @@ export function SessionList(props: {
     selectedSessionId?: string | null
     scrollContainerRef?: RefObject<HTMLElement | null>
     machineNames?: Map<string, string>
-    view?: 'grouped' | 'flat'
-    onToggleView?: () => void
 }) {
     const { t } = useTranslation()
+    const { isTouch } = usePlatform()
     const queryClient = useQueryClient()
     const { renderHeader = true, api, selectedSessionId, machineNames } = props
 
@@ -1198,7 +1317,6 @@ export function SessionList(props: {
 
                 const updatedAtBumped = previousUpdatedAt !== undefined
                     && session.updatedAt > previousUpdatedAt
-                // Agent finished: was active, now inactive
                 const becameInactive = wasActive === true && !session.active
 
                 if (updatedAtBumped || becameInactive) {
@@ -1218,7 +1336,6 @@ export function SessionList(props: {
     useEffect(() => {
         if (!selectedSessionId) return
 
-        // Update read history when a session is selected.
         setReadHistory(prev => {
             const next = { ...prev, [selectedSessionId]: Date.now() }
             saveSessionReadHistory(next)
@@ -1241,16 +1358,13 @@ export function SessionList(props: {
     const [activeDragSessionId, setActiveDragSessionId] = useState<string | null>(null)
     const [dragFrozenGroups, setDragFrozenGroups] = useState<SessionGroup[] | null>(null)
 
-    const isFlat = props.view === 'flat'
     const filteredSessions = useMemo(
         () => props.hideInactive ? props.sessions.filter(s => s.active) : props.sessions,
         [props.sessions, props.hideInactive]
     )
     const liveGroups = useMemo(
-        () => isFlat
-            ? flattenSessions(filteredSessions, readHistory, unreadSessionIds)
-            : groupSessionsByDirectory(filteredSessions, readHistory, unreadSessionIds),
-        [filteredSessions, readHistory, unreadSessionIds, isFlat]
+        () => groupSessions(filteredSessions, props.teams, readHistory),
+        [filteredSessions, props.teams, readHistory]
     )
     const displayGroups = useMemo(
         () => dragFrozenGroups
@@ -1280,9 +1394,13 @@ export function SessionList(props: {
 
     const listContainerRef = useRef<HTMLDivElement>(null)
 
-
     const sessionById = useMemo(
         () => new Map(props.sessions.map(session => [session.id, session])),
+        [props.sessions]
+    )
+
+    const sessionTitleMap = useMemo(
+        () => new Map(props.sessions.map(session => [session.id, getSessionTitle(session)])),
         [props.sessions]
     )
 
@@ -1302,12 +1420,17 @@ export function SessionList(props: {
     const hasInactiveSessions = clearInactiveCounts.all > 0
 
     const [collapseOverrides, setCollapseOverrides] = useState<Map<string, boolean>>(
-        () => new Map()
+        () => loadCollapseOverrides()
     )
 
     const isGroupCollapsed = (group: SessionGroup): boolean => {
         const override = collapseOverrides.get(group.key)
         if (override !== undefined) return override
+        if (group.type === 'team') {
+            if (group.teamPersistent) return false
+            // Temp teams auto-collapse when all idle
+            return !group.hasActiveSession
+        }
         return !group.hasActiveSession
     }
 
@@ -1315,12 +1438,12 @@ export function SessionList(props: {
         setCollapseOverrides(prev => {
             const next = new Map(prev)
             next.set(groupKey, !isCollapsed)
+            saveCollapseOverrides(next)
             return next
         })
     }
 
     useEffect(() => {
-        if (isFlat) return
         setCollapseOverrides(prev => {
             if (prev.size === 0) return prev
             const next = new Map(prev)
@@ -1332,9 +1455,11 @@ export function SessionList(props: {
                     changed = true
                 }
             }
-            return changed ? next : prev
+            if (!changed) return prev
+            saveCollapseOverrides(next)
+            return next
         })
-    }, [displayGroups, isFlat])
+    }, [displayGroups])
 
     const toggleSelectedSession = useCallback((sessionId: string) => {
         setSelectedSessionIds(prev => {
@@ -1485,12 +1610,8 @@ export function SessionList(props: {
                 <div className="flex items-center justify-between px-3 py-1">
                     <div className="text-xs text-[var(--app-hint)]">
                         {props.hideInactive
-                            ? (isFlat
-                                ? t('sessions.countActiveFlat', { n: filteredSessions.length })
-                                : t('sessions.countActive', { n: filteredSessions.length, m: displayGroups.length }))
-                            : (isFlat
-                                ? t('sessions.countFlat', { n: filteredSessions.length })
-                                : t('sessions.count', { n: filteredSessions.length, m: displayGroups.length }))}
+                            ? t('sessions.countActive', { n: filteredSessions.length, m: displayGroups.length })
+                            : t('sessions.count', { n: filteredSessions.length, m: displayGroups.length })}
                     </div>
                     <button
                         type="button"
@@ -1529,19 +1650,6 @@ export function SessionList(props: {
                     </>
                 ) : (
                     <div className="ml-auto flex items-center gap-2">
-                        {props.onToggleView ? (
-                            <button
-                                type="button"
-                                onClick={props.onToggleView}
-                                className={`rounded border px-2 py-1 text-xs ${isFlat
-                                    ? 'border-[var(--app-link)] text-[var(--app-link)]'
-                                    : 'border-[var(--app-border)] text-[var(--app-hint)]'}`}
-                                aria-pressed={isFlat}
-                                title={isFlat ? t('sessions.view.grouped') : t('sessions.view.flat')}
-                            >
-                                {isFlat ? t('sessions.view.flat') : t('sessions.view.grouped')}
-                            </button>
-                        ) : null}
                         <button
                             type="button"
                             onClick={() => setClearInactiveOpen(true)}
@@ -1572,59 +1680,72 @@ export function SessionList(props: {
                     {t('session.dragHandle.instructions')}
                 </p>
                 {displayGroups.map((group) => {
-                    if (isFlat) {
+                    const isCollapsed = isGroupCollapsed(group)
+                    const groupUnreadCount = group.sessions.filter(session => unreadSessionIds.has(session.id)).length
+
+                    if (group.type === 'team') {
+                        const { roots, childrenOf } = buildParentChildTree(group.sessions)
+                        const flatItems = flattenTree(roots, childrenOf, sessionTitleMap, isTouch)
+
                         return (
-                            <DndContext
-                                key={FLAT_DIRECTORY_KEY}
-                                sensors={sensors}
-                                collisionDetection={closestCenter}
-                                onDragStart={handleDragStart}
-                                onDragCancel={handleDragCancel}
-                                onDragEnd={(event) => {
-                                    void handleScopeDragEnd(event, group.sessions)
-                                }}
-                            >
-                                <SortableContext
-                                    items={group.sessions.map(session => session.id)}
-                                    strategy={verticalListSortingStrategy}
-                                >
-                                    <div className="flex flex-col divide-y divide-[var(--app-divider)]">
-                                        {group.sessions.map((session) => (
-                                            <SortableSessionItem
-                                                key={session.id}
-                                                session={session}
-                                                onSelect={handleSessionSelect}
-                                                onToggleSelected={toggleSelectedSession}
-                                                showPath={false}
-                                                projectLabel={getGroupDisplayName(
-                                                    session.metadata?.worktree?.basePath
-                                                    ?? session.metadata?.path
-                                                    ?? 'Other'
-                                                )}
-                                                api={api}
-                                                selected={session.id === selectedSessionId}
-                                                selectionMode={selectionMode}
-                                                selectedForBulk={selectedSessionIds.has(session.id)}
-                                                unread={unreadSessionIds.has(session.id)}
-                                                dndEnabled={dndEnabled}
-                                                dragInstructionsId={dragInstructionsId}
-                                                dragInProgress={dragInProgress}
-                                            />
-                                        ))}
-                                    </div>
-                                </SortableContext>
-                            </DndContext>
+                            <div key={group.key} className="group/team">
+                                <TeamGroupHeader
+                                    group={group}
+                                    isCollapsed={isCollapsed}
+                                    onToggle={() => toggleGroup(group.key, isCollapsed)}
+                                    unreadCount={groupUnreadCount}
+                                    t={t}
+                                />
+                                {!isCollapsed ? (
+                                    <DndContext
+                                        sensors={sensors}
+                                        collisionDetection={closestCenter}
+                                        onDragStart={handleDragStart}
+                                        onDragCancel={handleDragCancel}
+                                        onDragEnd={(event) => {
+                                            void handleScopeDragEnd(event, group.sessions)
+                                        }}
+                                    >
+                                        <SortableContext
+                                            items={group.sessions.map(session => session.id)}
+                                            strategy={verticalListSortingStrategy}
+                                        >
+                                            <div className="flex flex-col divide-y divide-[var(--app-divider)] border-b border-[var(--app-divider)]">
+                                                {flatItems.map(({ session, indentLevel, parentLabel }) => (
+                                                    <SortableSessionItem
+                                                        key={session.id}
+                                                        session={session}
+                                                        onSelect={handleSessionSelect}
+                                                        onToggleSelected={toggleSelectedSession}
+                                                        showPath={false}
+                                                        indentLevel={indentLevel}
+                                                        parentLabel={parentLabel ? t('team.parentBadge', { name: parentLabel }) : undefined}
+                                                        api={api}
+                                                        selected={session.id === selectedSessionId}
+                                                        selectionMode={selectionMode}
+                                                        selectedForBulk={selectedSessionIds.has(session.id)}
+                                                        unread={unreadSessionIds.has(session.id)}
+                                                        dndEnabled={dndEnabled}
+                                                        dragInstructionsId={dragInstructionsId}
+                                                        dragInProgress={dragInProgress}
+                                                    />
+                                                ))}
+                                            </div>
+                                        </SortableContext>
+                                    </DndContext>
+                                ) : null}
+                            </div>
                         )
                     }
 
-                    const isCollapsed = isGroupCollapsed(group)
+                    // Directory group
                     const canQuickCreateInGroup = group.directory !== 'Other'
                     const groupMachineId = group.machineId ?? group.sessions[0]?.metadata?.machineId
                     const groupMachineName = groupMachineId ? machineNames?.get(groupMachineId) : undefined
-                    const groupUnreadCount = group.sessions.filter(session => unreadSessionIds.has(session.id)).length
                     const groupAttentionCount = group.sessions.filter(session =>
                         deriveSessionStatus(session) === 'waiting-for-permission'
                     ).length
+
                     return (
                         <div key={group.key}>
                             <div data-group-header={group.directory} className="sticky top-0 z-10 flex items-center gap-1 border-b border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-3 py-2">
