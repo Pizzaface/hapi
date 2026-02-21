@@ -46,8 +46,8 @@ export function AttachmentItem() {
             <span className="max-w-[150px] truncate">{name}</span>
             <AttachmentPrimitive.Remove
                 className="ml-auto flex h-5 w-5 items-center justify-center rounded text-[var(--app-hint)] transition-colors hover:text-[var(--app-fg)]"
-                aria-label="Remove attachment"
-                title="Remove attachment"
+                aria-label={`Remove ${name || 'attachment'}`}
+                title={`Remove ${name || 'attachment'}`}
             >
                 <RemoveIcon />
             </AttachmentPrimitive.Remove>
