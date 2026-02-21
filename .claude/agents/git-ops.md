@@ -43,10 +43,8 @@ The main tree stays clean. A pre-commit hook blocks direct commits to `main`.
 - Chores: `chore/<description>`
 
 ### PR Workflow
-```bash
-git push -u origin <branch>
-gh pr create --title "type: description" --body "..."
-```
+
+Follow the PR format defined in `CLAUDE.md` — every section is mandatory. Use `gh pr create --title "type(scope): description" --body "$(cat <<'EOF' ... EOF)"` with a HEREDOC for the body.
 
 ## Safety Rules
 

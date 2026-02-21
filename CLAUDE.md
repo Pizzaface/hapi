@@ -33,20 +33,80 @@ bun run typecheck          # tsc --noEmit across all packages
 
 ## Pull Requests
 
-When creating a PR that includes UI changes (components, styling, layout, visual behavior), you MUST include a screenshot in the PR body. More broadly, include visual evidence whenever it would help the reviewer understand the change — err on the side of including an image.
+A reviewer should be able to understand, evaluate, and approve a PR from its description alone — without reading the diff first. Every PR opened by an agent MUST use the format below with `gh pr create --body`.
 
-Use the screenshot script (requires hub running via `bun run rebuild`):
+### Required PR body format
+
+```markdown
+## Summary
+
+<2-4 sentences: what user-facing problem this solves and how. Not "added files" — describe the behavior change.>
+
+Closes #<issue> <!-- or: Resolves hapi-xxx -->
+
+## What changed
+
+<File-by-file walkthrough grouped by package. For each file, one line explaining what changed and why.>
+
+**shared/**
+- `sessionStatus.ts` (new) — pure function to derive status key from session state
+- `index.ts` — re-export new module
+
+**web/**
+- `SessionList.tsx` — replaced hardcoded status dot with registry-driven lookup
+- `locales/en.ts`, `locales/zh-CN.ts` — added i18n keys for status labels
+
+**hub/**
+- (no changes)
+
+## How it works
+
+<1-2 paragraphs or a short list explaining the design/architecture. Key decisions, trade-offs, patterns used. What would a new contributor need to know?>
+
+## Test evidence
+
+<Paste actual test + typecheck output (abbreviated if long). Show what you ran and that it passes.>
 
 ```
-bun scripts/ui-preview.ts [route] [options]
-  --viewport mobile|desktop    (default: desktop)
-  --theme light|dark
-  --wait-for <selector>        Wait for element before capture
-  --output <path>              (default: /tmp/hapi-ui-preview.png)
-  --full-page                  Capture full scrollable page
+$ bun run test:web
+ ✓ 42 tests passed (3 skipped)
+$ bun run typecheck
+ ✓ no errors
 ```
 
-Upload the resulting image to the PR with `gh pr edit --add-file` or embed it in the PR body.
+## Acceptance criteria
+
+<Copy from the bead and check off each item. Leave unchecked items with a note if intentionally deferred.>
+
+- [x] Each session row shows colored status dot derived via deriveSessionStatus()
+- [x] Permission status shows amber pulsing dot with "needs input · N"
+- [ ] ~Collapsed group attention badge~ (deferred to follow-up — needs design review)
+
+## Screenshots
+
+<Required for any UI change. Use the sandbox — never the live hub.>
+
+<!--
+bun scripts/sandbox-hub.ts start --seed
+HAPI_HOME=$SANDBOX_HOME bun scripts/ui-preview.ts --hub $SANDBOX_URL --output /tmp/pr-screenshot.png /sessions
+bun scripts/sandbox-hub.ts stop
+-->
+
+<If no UI changes, write: "No visual changes.">
+```
+
+### Rules
+
+- **Title format**: `type(scope): description` — e.g., `feat(web): add session status indicators`
+  - Types: `feat`, `fix`, `refactor`, `test`, `chore`, `docs`
+  - Scope: `web`, `hub`, `cli`, `shared`, or omit for cross-cutting
+- **Link the bead**: Always reference the bead ID (`hapi-xxx`) in the summary
+- **File walkthrough is mandatory**: Reviewers scan this first. Group by package, one line per file
+- **Test evidence is mandatory**: Paste real output, not "tests pass". Show the command and result
+- **Acceptance criteria from bead**: Copy verbatim and check off. If criteria were adjusted during implementation, note why
+- **Screenshots for UI work**: Use the sandbox (see `.claude/rules/screenshots.md`). Include desktop; add mobile if layout differs
+- **No empty sections**: If a section doesn't apply, write why (e.g., "No UI changes" or "No acceptance criteria — bug fix")
+- **Keep it scannable**: Use bullets and short lines. The description should take <60 seconds to read
 
 ## Agent Context
 

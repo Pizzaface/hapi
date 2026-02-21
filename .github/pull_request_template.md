@@ -1,23 +1,44 @@
 ## Summary
 
-- 
+<!-- What user-facing problem does this solve? How? 2-4 sentences. -->
+<!-- Reference the bead: Resolves hapi-xxx -->
 
-## Testing
+## What changed
 
-- [ ] `bun run test`
-- [ ] `bun run typecheck`
-- [ ] Not applicable (explain why)
+<!-- File-by-file walkthrough grouped by package. One line per file. -->
 
-## UI Evidence
+**shared/**
+-
 
-- [ ] UI changes included in this PR
-- [ ] No visual/UI changes
+**web/**
+-
 
-No visual/UI changes explanation: <!-- required when "No visual/UI changes" is checked -->
+**hub/**
+-
 
-If this PR includes UI changes, add screenshot(s) or short recording(s) here:
+**cli/**
+-
 
-<!-- Example:
-![Desktop light mode](https://github.com/user-attachments/assets/...)
-![Mobile dark mode](https://github.com/user-attachments/assets/...)
--->
+## How it works
+
+<!-- Key design decisions, architecture, trade-offs. What would a new contributor need to know? -->
+
+## Test evidence
+
+<!-- Paste actual test + typecheck output. Show command and result. -->
+
+```
+$ bun run test
+$ bun run typecheck
+```
+
+## Acceptance criteria
+
+<!-- Copy from bead, check off each item. Note any deferred items. -->
+
+- [ ]
+
+## Screenshots
+
+<!-- Required for UI changes. Use the sandbox (see .claude/rules/screenshots.md). -->
+<!-- If no UI changes, write: "No visual changes." -->
