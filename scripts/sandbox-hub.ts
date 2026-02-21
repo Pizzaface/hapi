@@ -67,10 +67,12 @@ async function cleanStale(): Promise<void> {
 async function start(args: string[]): Promise<void> {
     let preferredPort: number | undefined
     let seed = false
+    let dev = false
 
     for (let i = 0; i < args.length; i++) {
         if (args[i] === '--port') preferredPort = parseInt(args[++i], 10)
         else if (args[i] === '--seed') seed = true
+        else if (args[i] === '--dev') dev = true
     }
 
     await cleanStale()
@@ -100,7 +102,16 @@ async function start(args: string[]): Promise<void> {
     for (let attempt = 1; attempt <= 3; attempt++) {
         console.log(`==> Starting sandbox hub on port ${port} (attempt ${attempt}/3)...`)
         const logFd = openSync(hubLog, 'a')
-        const hubProc = Bun.spawn(['hapi', 'hub', '--no-relay'], {
+        // --dev: run hub from TypeScript source so web/dist changes are picked
+        // up without rebuilding the global binary. The hub's findWebappDistDir()
+        // resolves web/dist relative to cwd, so bun run build:web is sufficient.
+        const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+        const hubCmd = dev
+            ? ['bun', join(projectRoot, 'hub/src/index.ts'), '--no-relay']
+            : ['hapi', 'hub', '--no-relay']
+
+        const hubProc = Bun.spawn(hubCmd, {
+            cwd: dev ? projectRoot : undefined,
             env: {
                 ...process.env,
                 HAPI_HOME: home,
@@ -143,7 +154,7 @@ async function start(args: string[]): Promise<void> {
             const state: SandboxState = { pid, port, home, startedAt: Date.now(), token }
             await Bun.write(STATE_FILE, JSON.stringify(state, null, 2))
 
-            console.log(`==> Sandbox hub ready (pid ${pid})`)
+            console.log(`==> Sandbox hub ready (pid ${pid}${dev ? ', dev mode' : ''})`)
             console.log(`SANDBOX_URL=http://127.0.0.1:${port}`)
             console.log(`SANDBOX_HOME=${home}`)
             console.log(`SANDBOX_TOKEN=${token}`)
@@ -213,8 +224,10 @@ switch (cmd) {
     default:
         console.log(`Usage: bun scripts/sandbox-hub.ts <start|stop|status>
 
-  start [--port <n>] [--seed]   Start isolated hub
-  stop                          Kill sandbox and clean up
-  status                        Check if sandbox is running`)
+  start [--port <n>] [--seed] [--dev]   Start isolated hub
+    --seed   Populate DB with fixture data
+    --dev    Run hub from TypeScript source (serves web/dist from disk)
+  stop                                  Kill sandbox and clean up
+  status                                Check if sandbox is running`)
         process.exit(cmd ? 1 : 0)
 }

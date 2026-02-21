@@ -9,9 +9,18 @@ take screenshots against that instance. Always use the sandbox.
 
 ### 1. Start the sandbox (with seed data)
 
+**Always use `--dev`** when screenshotting changes from the current branch. This
+runs the hub from TypeScript source and serves `web/dist` from disk, so a
+`bun run build:web` is all you need — no `bun run rebuild` required.
+
 ```bash
-bun scripts/sandbox-hub.ts start --seed
+bun run build:web
+bun scripts/sandbox-hub.ts start --seed --dev
 ```
+
+Without `--dev`, the sandbox uses the globally-installed `hapi` binary (which
+has web assets embedded at compile time). Only omit `--dev` if you specifically
+need to test the compiled binary.
 
 The script prints:
 
@@ -79,8 +88,9 @@ group name first to expand it before the session name becomes clickable.
 ## Full example
 
 ```bash
-# Start
-bun scripts/sandbox-hub.ts start --seed
+# Build web assets and start sandbox from source
+bun run build:web
+bun scripts/sandbox-hub.ts start --seed --dev
 # Parse output for SANDBOX_URL and SANDBOX_HOME
 
 # Sessions list

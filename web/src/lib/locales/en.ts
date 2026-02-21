@@ -41,6 +41,11 @@ export default {
   // Sessions page
   'sessions.count': '{n} sessions in {m} projects',
   'sessions.countFlat': '{n} sessions',
+  'sessions.countActive': '{n} active in {m} projects',
+  'sessions.countActiveFlat': '{n} active',
+  'sessions.showInactive': 'Show inactive sessions',
+  'sessions.hideInactive': 'Hide inactive sessions',
+  'sessions.emptyInactive': 'All sessions are inactive. Tap the eye icon to show them.',
   'sessions.view.flat': 'Flat',
   'sessions.view.grouped': 'Grouped',
   'sessions.new': 'New Session',

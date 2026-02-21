@@ -41,6 +41,11 @@ export default {
   // Sessions page
   'sessions.count': '{n} 个会话，{m} 个项目',
   'sessions.countFlat': '{n} 个会话',
+  'sessions.countActive': '{n} 个活跃会话，{m} 个项目',
+  'sessions.countActiveFlat': '{n} 个活跃会话',
+  'sessions.showInactive': '显示非活跃会话',
+  'sessions.hideInactive': '隐藏非活跃会话',
+  'sessions.emptyInactive': '所有会话均为非活跃状态。点击眼睛图标以查看。',
   'sessions.view.flat': '列表',
   'sessions.view.grouped': '分组',
   'sessions.new': '新建会话',

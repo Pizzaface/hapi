@@ -967,7 +967,7 @@ function SessionItem(props: {
                                         className={`h-2 w-2 rounded-full ${statusDisplay.dotClass}${statusDisplay.animate ? ' animate-pulse' : ''}`}
                                     />
                                 </span>
-                                <div className="truncate text-base font-medium">
+                                <div className={`truncate text-base font-medium${!s.active ? ' text-[var(--app-hint)]' : ''}`}>
                                     {sessionName}
                                 </div>
                             </div>
@@ -1125,6 +1125,7 @@ function SortableSessionItem(
 
 export function SessionList(props: {
     sessions: SessionSummary[]
+    hideInactive?: boolean
     onSelect: (sessionId: string) => void
     onNewSession: (opts?: { directory?: string; machineId?: string }) => void
     onRefresh: () => void
@@ -1231,11 +1232,15 @@ export function SessionList(props: {
     const [dragFrozenGroups, setDragFrozenGroups] = useState<SessionGroup[] | null>(null)
 
     const isFlat = props.view === 'flat'
+    const filteredSessions = useMemo(
+        () => props.hideInactive ? props.sessions.filter(s => s.active) : props.sessions,
+        [props.sessions, props.hideInactive]
+    )
     const liveGroups = useMemo(
         () => isFlat
-            ? flattenSessions(props.sessions, readHistory, unreadSessionIds)
-            : groupSessionsByDirectory(props.sessions, readHistory, unreadSessionIds),
-        [props.sessions, readHistory, unreadSessionIds, isFlat]
+            ? flattenSessions(filteredSessions, readHistory, unreadSessionIds)
+            : groupSessionsByDirectory(filteredSessions, readHistory, unreadSessionIds),
+        [filteredSessions, readHistory, unreadSessionIds, isFlat]
     )
     const displayGroups = useMemo(
         () => dragFrozenGroups
@@ -1469,9 +1474,13 @@ export function SessionList(props: {
             {renderHeader ? (
                 <div className="flex items-center justify-between px-3 py-1">
                     <div className="text-xs text-[var(--app-hint)]">
-                        {isFlat
-                            ? t('sessions.countFlat', { n: props.sessions.length })
-                            : t('sessions.count', { n: props.sessions.length, m: displayGroups.length })}
+                        {props.hideInactive
+                            ? (isFlat
+                                ? t('sessions.countActiveFlat', { n: filteredSessions.length })
+                                : t('sessions.countActive', { n: filteredSessions.length, m: displayGroups.length }))
+                            : (isFlat
+                                ? t('sessions.countFlat', { n: filteredSessions.length })
+                                : t('sessions.count', { n: filteredSessions.length, m: displayGroups.length }))}
                     </div>
                     <button
                         type="button"
@@ -1699,6 +1708,12 @@ export function SessionList(props: {
                         </div>
                     )
                 })}
+
+                {displayGroups.length === 0 && props.sessions.length > 0 && props.hideInactive ? (
+                    <div className="px-3 py-8 text-center text-sm text-[var(--app-hint)]">
+                        {t('sessions.emptyInactive')}
+                    </div>
+                ) : null}
             </div>
 
             <ClearInactiveDialog

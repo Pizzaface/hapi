@@ -21,6 +21,7 @@ import { useAppContext } from '@/lib/app-context'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { isTelegramApp } from '@/hooks/useTelegram'
 import { useSessionListView } from '@/hooks/useSessionListView'
+import { useSessionFilter } from '@/hooks/useSessionFilter'
 import { useMessages } from '@/hooks/queries/useMessages'
 import { useMachines } from '@/hooks/queries/useMachines'
 import { useSession } from '@/hooks/queries/useSession'
@@ -163,6 +164,46 @@ function SettingsIcon(props: { className?: string }) {
     )
 }
 
+function EyeIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+            <circle cx="12" cy="12" r="3" />
+        </svg>
+    )
+}
+
+function EyeOffIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+            <line x1="1" y1="1" x2="23" y2="23" />
+        </svg>
+    )
+}
+
 function SessionListPanel(props: {
     sessions: ReturnType<typeof useSessions>['sessions']
     selectedSessionId: string | null
@@ -172,6 +213,8 @@ function SessionListPanel(props: {
     systemStats: ReturnType<typeof useSystemStats>['stats']
     view: ReturnType<typeof useSessionListView>['view']
     toggleView: () => void
+    hideInactive: boolean
+    onToggleHideInactive: () => void
     onRefresh: () => void
     onSelect: (sessionId: string) => void
     onNewSession: (opts?: { directory?: string; machineId?: string }) => void
@@ -180,10 +223,11 @@ function SessionListPanel(props: {
 }) {
     const { t } = useTranslation()
     const navigate = useNavigate()
-    const { sessions, selectedSessionId, isLoading, error, machineNames, systemStats, view, toggleView, onRefresh, onSelect, onNewSession, scrollContainerRef, api } = props
+    const { sessions, selectedSessionId, isLoading, error, machineNames, systemStats, view, toggleView, hideInactive, onToggleHideInactive, onRefresh, onSelect, onNewSession, scrollContainerRef, api } = props
 
+    const displaySessions = hideInactive ? sessions.filter(s => s.active) : sessions
     const projectCount = new Set(
-        sessions.map((session) => {
+        displaySessions.map((session) => {
             const directory = session.metadata?.worktree?.basePath ?? session.metadata?.path ?? 'Other'
             const machineId = session.metadata?.machineId ?? 'unknown-machine'
             return `${machineId}::${directory}`
@@ -195,11 +239,25 @@ function SessionListPanel(props: {
             <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
                 <div className="mx-auto w-full max-w-content flex items-center justify-between px-3 py-2">
                     <div className="text-xs text-[var(--app-hint)]">
-                        {view === 'flat'
-                            ? t('sessions.countFlat', { n: sessions.length })
-                            : t('sessions.count', { n: sessions.length, m: projectCount })}
+                        {hideInactive
+                            ? (view === 'flat'
+                                ? t('sessions.countActiveFlat', { n: displaySessions.length })
+                                : t('sessions.countActive', { n: displaySessions.length, m: projectCount }))
+                            : (view === 'flat'
+                                ? t('sessions.countFlat', { n: sessions.length })
+                                : t('sessions.count', { n: sessions.length, m: projectCount }))}
                     </div>
                     <div className="flex items-center gap-2">
+                        {sessions.length > 0 ? (
+                            <button
+                                type="button"
+                                onClick={onToggleHideInactive}
+                                className="p-1.5 rounded-full text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)] transition-colors"
+                                title={hideInactive ? t('sessions.showInactive') : t('sessions.hideInactive')}
+                            >
+                                {hideInactive ? <EyeOffIcon className="h-5 w-5" /> : <EyeIcon className="h-5 w-5" />}
+                            </button>
+                        ) : null}
                         <button
                             type="button"
                             onClick={() => navigate({ to: '/settings' })}
@@ -228,6 +286,7 @@ function SessionListPanel(props: {
                 ) : null}
                 <SessionList
                     sessions={sessions}
+                    hideInactive={hideInactive}
                     selectedSessionId={selectedSessionId}
                     scrollContainerRef={scrollContainerRef}
                     machineNames={machineNames}
@@ -256,6 +315,7 @@ function SessionsPage() {
     const { sessions, isLoading, error, refetch } = useSessions(api)
     const { stats: systemStats } = useSystemStats(api)
     const { view, toggleView } = useSessionListView()
+    const { hideInactive, toggleHideInactive } = useSessionFilter()
     const scrollContainerRef = useRef<HTMLDivElement>(null)
     const { width: sidebarWidth, handleResizeStart } = useSidebarResize()
     const { machines } = useMachines(api, true)
@@ -323,6 +383,8 @@ function SessionsPage() {
         systemStats,
         view,
         toggleView,
+        hideInactive,
+        onToggleHideInactive: toggleHideInactive,
         onRefresh: handleRefresh,
         onSelect: handleSessionSelect,
         onNewSession: handleNewSession,
