@@ -129,7 +129,7 @@ export async function startHappyServer(client: ApiSessionClient) {
         directory: z.string().min(1).describe('Working directory for the new session (prefer absolute path)'),
         machineId: z.string().optional().describe('Optional machine ID. Defaults to current session machine when available'),
         agent: z.enum(['claude', 'codex', 'gemini', 'opencode']).optional().describe('Agent type for the new session: claude (default), codex (OpenAI Codex), gemini (Google Gemini), or opencode. Match to the user\'s requested agent.'),
-        model: z.string().optional().describe('Optional model override for the spawned session'),
+        model: z.string().optional().describe('Model override. Per agent: claude → opus/sonnet/haiku, codex → o3/o4-mini/gpt-4.1, gemini → gemini-2.5-pro/gemini-2.5-flash. Omit to use each agent\'s best model.'),
         yolo: z.union([z.boolean(), z.literal('true').transform(() => true), z.literal('false').transform(() => false)]).optional().describe('Enable aggressive auto-approval mode for the spawned session'),
         sessionType: z.enum(['simple', 'worktree']).optional().describe('Spawn a normal session or a Git worktree session'),
         worktreeName: z.string().optional().describe('Optional worktree name hint (worktree sessions only)'),
