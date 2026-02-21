@@ -202,7 +202,9 @@ async function main() {
         }
     }
 
-    notificationHub = new NotificationHub(syncEngine, notificationChannels)
+    notificationHub = new NotificationHub(syncEngine, notificationChannels, {
+        preferencesStore: store.userPreferences
+    })
 
     // Start HTTP service first (before tunnel, so tunnel has something to forward to)
     webServer = await startWebServer({

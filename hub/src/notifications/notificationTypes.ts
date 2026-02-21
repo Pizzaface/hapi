@@ -5,7 +5,16 @@ export type NotificationChannel = {
     sendPermissionRequest: (session: Session) => Promise<void>
 }
 
+export type PreferencesStore = {
+    get: (namespace: string) => {
+        readyAnnouncements: boolean
+        permissionNotifications: boolean
+        errorNotifications: boolean
+    }
+}
+
 export type NotificationHubOptions = {
     readyCooldownMs?: number
     permissionDebounceMs?: number
+    preferencesStore?: PreferencesStore
 }

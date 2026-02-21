@@ -4,7 +4,9 @@ import type { Store } from '../../store'
 import type { WebAppEnv } from '../middleware/auth'
 
 const updatePreferencesSchema = z.object({
-    readyAnnouncements: z.boolean().optional()
+    readyAnnouncements: z.boolean().optional(),
+    permissionNotifications: z.boolean().optional(),
+    errorNotifications: z.boolean().optional()
 })
 
 export function createPreferencesRoutes(store: Store): Hono<WebAppEnv> {
@@ -14,7 +16,9 @@ export function createPreferencesRoutes(store: Store): Hono<WebAppEnv> {
         const namespace = c.get('namespace')
         const preferences = store.userPreferences.get(namespace)
         return c.json({
-            readyAnnouncements: preferences.readyAnnouncements
+            readyAnnouncements: preferences.readyAnnouncements,
+            permissionNotifications: preferences.permissionNotifications,
+            errorNotifications: preferences.errorNotifications
         })
     })
 
@@ -26,14 +30,14 @@ export function createPreferencesRoutes(store: Store): Hono<WebAppEnv> {
         }
 
         const namespace = c.get('namespace')
-        const current = store.userPreferences.get(namespace)
-        const nextReadyAnnouncements = parsed.data.readyAnnouncements ?? current.readyAnnouncements
-        const saved = store.userPreferences.setReadyAnnouncements(namespace, nextReadyAnnouncements)
+        const saved = store.userPreferences.update(namespace, parsed.data)
 
         return c.json({
             ok: true,
             preferences: {
-                readyAnnouncements: saved.readyAnnouncements
+                readyAnnouncements: saved.readyAnnouncements,
+                permissionNotifications: saved.permissionNotifications,
+                errorNotifications: saved.errorNotifications
             }
         })
     })

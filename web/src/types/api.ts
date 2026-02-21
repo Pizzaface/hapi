@@ -214,10 +214,14 @@ export type VisibilityPayload = {
 
 export type PreferencesResponse = {
     readyAnnouncements: boolean
+    permissionNotifications: boolean
+    errorNotifications: boolean
 }
 
 export type UpdatePreferencesPayload = {
     readyAnnouncements?: boolean
+    permissionNotifications?: boolean
+    errorNotifications?: boolean
 }
 
 export type UpdatePreferencesResponse = {

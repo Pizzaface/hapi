@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react'
 import { I18nContext, I18nProvider } from '@/lib/i18n-context'
 import { AppContextProvider } from '@/lib/app-context'
 import { en } from '@/lib/locales'
@@ -32,27 +32,47 @@ vi.mock('@/lib/languages', () => ({
     getLanguageDisplayName: (lang: { code: string | null; name: string }) => lang.name,
 }))
 
-function renderWithProviders(ui: React.ReactElement) {
-    const api = {
-        getPreferences: vi.fn(async () => ({ readyAnnouncements: false })),
-        updatePreferences: vi.fn(async () => ({ ok: true, preferences: { readyAnnouncements: false } }))
+const defaultPreferences = {
+    readyAnnouncements: true,
+    permissionNotifications: true,
+    errorNotifications: false
+}
+
+function makeApi(overrides?: {
+    getPreferencesResult?: typeof defaultPreferences
+    updatePreferencesShouldFail?: boolean
+}) {
+    return {
+        getPreferences: vi.fn(async () => overrides?.getPreferencesResult ?? defaultPreferences),
+        updatePreferences: vi.fn(async (payload: Record<string, unknown>) => {
+            if (overrides?.updatePreferencesShouldFail) {
+                throw new Error('Server error')
+            }
+            return {
+                ok: true,
+                preferences: { ...defaultPreferences, ...payload }
+            }
+        })
     }
-    return render(
-        <AppContextProvider value={{ api: api as any, token: 'token', baseUrl: '' }}>
-            <I18nProvider>
-                {ui}
-            </I18nProvider>
-        </AppContextProvider>
-    )
+}
+
+function renderWithProviders(ui: React.ReactElement, api = makeApi()) {
+    return {
+        api,
+        ...render(
+            <AppContextProvider value={{ api: api as any, token: 'token', baseUrl: '' }}>
+                <I18nProvider>
+                    {ui}
+                </I18nProvider>
+            </AppContextProvider>
+        )
+    }
 }
 
 function renderWithSpyT(ui: React.ReactElement) {
     const translations = en as Record<string, string>
     const spyT = vi.fn((key: string) => translations[key] ?? key)
-    const api = {
-        getPreferences: vi.fn(async () => ({ readyAnnouncements: false })),
-        updatePreferences: vi.fn(async () => ({ ok: true, preferences: { readyAnnouncements: false } }))
-    }
+    const api = makeApi()
     render(
         <AppContextProvider value={{ api: api as any, token: 'token', baseUrl: '' }}>
             <I18nContext.Provider value={{ t: spyT, locale: 'en', setLocale: vi.fn() }}>
@@ -64,8 +84,12 @@ function renderWithSpyT(ui: React.ReactElement) {
 }
 
 describe('SettingsPage', () => {
-    beforeEach(() => {
+    afterEach(() => {
+        cleanup()
         vi.clearAllMocks()
+    })
+
+    beforeEach(() => {
         // Mock localStorage
         const localStorageMock = {
             getItem: vi.fn(() => 'en'),
@@ -110,5 +134,90 @@ describe('SettingsPage', () => {
         expect(calledKeys).toContain('settings.about.website')
         expect(calledKeys).toContain('settings.about.appVersion')
         expect(calledKeys).toContain('settings.about.protocolVersion')
+    })
+
+    it('renders the Notifications section with 3 toggles', () => {
+        renderWithProviders(<SettingsPage />)
+        expect(screen.getByText('Notifications')).toBeInTheDocument()
+        expect(screen.getByText('Ready / Idle')).toBeInTheDocument()
+        expect(screen.getByText('Permission Prompts')).toBeInTheDocument()
+        expect(screen.getByText('Error Notifications')).toBeInTheDocument()
+    })
+
+    it('Error Notifications toggle is disabled with Coming soon sublabel', () => {
+        renderWithProviders(<SettingsPage />)
+        expect(screen.getByText('Coming soon')).toBeInTheDocument()
+        const errorToggle = screen.getByRole('switch', { name: /error notifications/i })
+        expect(errorToggle).toBeDisabled()
+    })
+
+    it('shows allDisabledWarning when both enabled toggles are off', async () => {
+        const api = makeApi({
+            getPreferencesResult: {
+                readyAnnouncements: false,
+                permissionNotifications: false,
+                errorNotifications: false
+            }
+        })
+        renderWithProviders(<SettingsPage />, api)
+        await waitFor(() => {
+            expect(screen.getByText('All notifications are off. You may miss important events.')).toBeInTheDocument()
+        })
+    })
+
+    it('does not show allDisabledWarning when at least one enabled toggle is on', async () => {
+        const api = makeApi({
+            getPreferencesResult: {
+                readyAnnouncements: true,
+                permissionNotifications: false,
+                errorNotifications: false
+            }
+        })
+        renderWithProviders(<SettingsPage />, api)
+        await waitFor(() => {
+            expect(screen.queryByText('All notifications are off. You may miss important events.')).not.toBeInTheDocument()
+        })
+    })
+
+    it('calls updatePreferences with readyAnnouncements=false when Ready/Idle toggled off', async () => {
+        const api = makeApi()
+        renderWithProviders(<SettingsPage />, api)
+        await waitFor(() => {
+            expect(api.getPreferences).toHaveBeenCalled()
+        })
+
+        const toggle = screen.getByRole('switch', { name: /ready \/ idle/i })
+        fireEvent.click(toggle)
+        expect(api.updatePreferences).toHaveBeenCalledWith({ readyAnnouncements: false })
+    })
+
+    it('calls updatePreferences with permissionNotifications=false when Permission Prompts toggled off', async () => {
+        const api = makeApi()
+        renderWithProviders(<SettingsPage />, api)
+        await waitFor(() => {
+            expect(api.getPreferences).toHaveBeenCalled()
+        })
+
+        const toggle = screen.getByRole('switch', { name: /permission prompts/i })
+        fireEvent.click(toggle)
+        expect(api.updatePreferences).toHaveBeenCalledWith({ permissionNotifications: false })
+    })
+
+    it('rolls back Ready/Idle toggle on server failure', async () => {
+        const api = makeApi({ updatePreferencesShouldFail: true })
+        renderWithProviders(<SettingsPage />, api)
+        await waitFor(() => {
+            expect(api.getPreferences).toHaveBeenCalled()
+        })
+
+        const toggle = screen.getByRole('switch', { name: /ready \/ idle/i })
+        // Initially on (server returned true)
+        expect(toggle).toHaveAttribute('aria-checked', 'true')
+
+        fireEvent.click(toggle)
+        // After optimistic update: should be false briefly, then rollback to true
+        await waitFor(() => {
+            expect(toggle).toHaveAttribute('aria-checked', 'true')
+        })
     })
 })

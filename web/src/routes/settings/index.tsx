@@ -4,7 +4,10 @@ import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { useAppContext } from '@/lib/app-context'
 import { getElevenLabsSupportedLanguages, getLanguageDisplayName, type Language } from '@/lib/languages'
 import { getFontScaleOptions, useFontScale, type FontScale } from '@/hooks/useFontScale'
-import { isReadyAnnouncementsEnabled, setReadyAnnouncementsEnabled } from '@/lib/settings'
+import {
+    isReadyAnnouncementsEnabled, setReadyAnnouncementsEnabled,
+    isPermissionNotificationsEnabled, setPermissionNotificationsEnabled
+} from '@/lib/settings'
 import { PROTOCOL_VERSION } from '@hapi/protocol'
 
 const locales: { value: Locale; nativeLabel: string }[] = [
@@ -71,6 +74,39 @@ function ChevronDownIcon(props: { className?: string }) {
     )
 }
 
+type ToggleProps = {
+    enabled: boolean
+    disabled?: boolean
+    onChange: () => void
+    label: string
+    sublabel?: string
+    ariaChecked?: boolean
+}
+
+function Toggle({ enabled, disabled = false, onChange, label, sublabel }: ToggleProps) {
+    return (
+        <button
+            type="button"
+            onClick={disabled ? undefined : onChange}
+            disabled={disabled}
+            className={`flex w-full items-center justify-between px-3 py-3 text-left transition-colors ${disabled ? 'cursor-not-allowed opacity-50' : 'hover:bg-[var(--app-subtle-bg)]'}`}
+            role="switch"
+            aria-checked={enabled}
+            aria-disabled={disabled}
+        >
+            <span className="flex flex-col">
+                <span className={disabled ? 'text-[var(--app-hint)]' : 'text-[var(--app-fg)]'}>{label}</span>
+                {sublabel && (
+                    <span className="text-xs text-[var(--app-hint)]">{sublabel}</span>
+                )}
+            </span>
+            <span className={`inline-flex h-5 w-9 items-center rounded-full transition-colors ${enabled ? 'bg-[var(--app-link)]' : 'bg-[var(--app-border)]'}`}>
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+            </span>
+        </button>
+    )
+}
+
 export default function SettingsPage() {
     const { api } = useAppContext()
     const { t, locale, setLocale } = useTranslation()
@@ -87,12 +123,18 @@ export default function SettingsPage() {
     const [voiceLanguage, setVoiceLanguage] = useState<string | null>(() => {
         return localStorage.getItem('hapi-voice-lang')
     })
-    const [readyAnnouncementsEnabled, setReadyAnnouncementsEnabledState] = useState<boolean>(() => isReadyAnnouncementsEnabled())
+    const [readyIdleEnabled, setReadyIdleEnabledState] = useState<boolean>(() => isReadyAnnouncementsEnabled())
+    const [permissionNotificationsEnabled, setPermissionNotificationsEnabledState] = useState<boolean>(
+        () => isPermissionNotificationsEnabled()
+    )
 
     const fontScaleOptions = getFontScaleOptions()
     const currentLocale = locales.find((loc) => loc.value === locale)
     const currentFontScaleLabel = fontScaleOptions.find((opt) => opt.value === fontScale)?.label ?? '100%'
     const currentVoiceLanguage = voiceLanguages.find((lang) => lang.code === voiceLanguage)
+
+    // All enabled toggles are off warning (error notifications always disabled/coming soon, so not counted)
+    const allNotificationsOff = !readyIdleEnabled && !permissionNotificationsEnabled
 
     const handleLocaleChange = (newLocale: Locale) => {
         setLocale(newLocale)
@@ -114,12 +156,27 @@ export default function SettingsPage() {
         setIsVoiceOpen(false)
     }
 
-    const handleReadyAnnouncementsToggle = () => {
-        const next = !readyAnnouncementsEnabled
-        setReadyAnnouncementsEnabledState(next)
+    const handleReadyIdleToggle = () => {
+        const next = !readyIdleEnabled
+        const previous = readyIdleEnabled
+        setReadyIdleEnabledState(next)
         setReadyAnnouncementsEnabled(next)
         void api.updatePreferences({ readyAnnouncements: next }).catch(() => {
-            // Keep local preference even if sync fails
+            // Rollback on failure
+            setReadyIdleEnabledState(previous)
+            setReadyAnnouncementsEnabled(previous)
+        })
+    }
+
+    const handlePermissionNotificationsToggle = () => {
+        const next = !permissionNotificationsEnabled
+        const previous = permissionNotificationsEnabled
+        setPermissionNotificationsEnabledState(next)
+        setPermissionNotificationsEnabled(next)
+        void api.updatePreferences({ permissionNotifications: next }).catch(() => {
+            // Rollback on failure
+            setPermissionNotificationsEnabledState(previous)
+            setPermissionNotificationsEnabled(previous)
         })
     }
 
@@ -129,8 +186,10 @@ export default function SettingsPage() {
         void api.getPreferences()
             .then((preferences) => {
                 if (cancelled) return
-                setReadyAnnouncementsEnabledState(preferences.readyAnnouncements)
+                setReadyIdleEnabledState(preferences.readyAnnouncements)
                 setReadyAnnouncementsEnabled(preferences.readyAnnouncements)
+                setPermissionNotificationsEnabledState(preferences.permissionNotifications)
+                setPermissionNotificationsEnabled(preferences.permissionNotifications)
             })
             .catch(() => {
                 // Keep local fallback
@@ -247,18 +306,35 @@ export default function SettingsPage() {
                                 </div>
                             )}
                         </div>
-                        <button
-                            type="button"
-                            onClick={handleReadyAnnouncementsToggle}
-                            className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
-                            role="switch"
-                            aria-checked={readyAnnouncementsEnabled}
-                        >
-                            <span className="text-[var(--app-fg)]">{t('settings.voice.readyAnnouncements')}</span>
-                            <span className={`inline-flex h-5 w-9 items-center rounded-full transition-colors ${readyAnnouncementsEnabled ? 'bg-[var(--app-link)]' : 'bg-[var(--app-border)]'}`}>
-                                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${readyAnnouncementsEnabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                            </span>
-                        </button>
+                    </div>
+
+                    {/* Notifications section */}
+                    <div className="border-b border-[var(--app-divider)]">
+                        <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
+                            {t('settings.notifications.title')}
+                        </div>
+                        {allNotificationsOff && (
+                            <div className="mx-3 mb-2 rounded-md bg-[var(--app-warning-bg,#fef3c7)] px-3 py-2 text-xs text-[var(--app-warning-fg,#92400e)]">
+                                {t('settings.notifications.allDisabledWarning')}
+                            </div>
+                        )}
+                        <Toggle
+                            enabled={readyIdleEnabled}
+                            onChange={handleReadyIdleToggle}
+                            label={t('settings.notifications.readyIdle')}
+                        />
+                        <Toggle
+                            enabled={permissionNotificationsEnabled}
+                            onChange={handlePermissionNotificationsToggle}
+                            label={t('settings.notifications.permissionPrompts')}
+                        />
+                        <Toggle
+                            enabled={false}
+                            disabled
+                            onChange={() => {}}
+                            label={t('settings.notifications.errorNotifications')}
+                            sublabel={t('settings.notifications.errorNotifications.comingSoon')}
+                        />
                     </div>
 
                     {/* Display section */}

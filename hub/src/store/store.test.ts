@@ -217,6 +217,129 @@ describe('Store sessions/machines/messages', () => {
         expect(updated?.updatedAt).toBe(session.updatedAt)
     })
 
+    it('migrates v6 to v8 and adds parent_session_id, permission_notifications, and error_notifications columns', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'hapi-store-migration-v7-'))
+        const dbPath = join(dir, 'store.sqlite')
+
+        const seedDb = new Database(dbPath, { create: true, readwrite: true, strict: true })
+        seedDb.exec(`
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                tag TEXT,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                machine_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                metadata TEXT,
+                metadata_version INTEGER DEFAULT 1,
+                agent_state TEXT,
+                agent_state_version INTEGER DEFAULT 1,
+                todos TEXT,
+                todos_updated_at INTEGER,
+                active INTEGER DEFAULT 0,
+                active_at INTEGER,
+                seq INTEGER DEFAULT 0,
+                sort_order TEXT
+            );
+            CREATE INDEX idx_sessions_tag ON sessions(tag);
+            CREATE INDEX idx_sessions_tag_namespace ON sessions(tag, namespace);
+            CREATE INDEX idx_sessions_namespace_sort_order ON sessions(namespace, sort_order, id);
+
+            CREATE TABLE machines (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                metadata TEXT,
+                metadata_version INTEGER DEFAULT 1,
+                runner_state TEXT,
+                runner_state_version INTEGER DEFAULT 1,
+                active INTEGER DEFAULT 0,
+                active_at INTEGER,
+                seq INTEGER DEFAULT 0
+            );
+            CREATE TABLE messages (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                seq INTEGER NOT NULL,
+                local_id TEXT
+            );
+            CREATE TABLE users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform TEXT NOT NULL,
+                platform_user_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                created_at INTEGER NOT NULL
+            );
+            CREATE TABLE push_subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                namespace TEXT NOT NULL,
+                endpoint TEXT NOT NULL,
+                p256dh TEXT NOT NULL,
+                auth TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            CREATE TABLE user_preferences (
+                namespace TEXT PRIMARY KEY,
+                ready_announcements INTEGER NOT NULL DEFAULT 1,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE session_beads (
+                session_id TEXT NOT NULL,
+                bead_id TEXT NOT NULL,
+                linked_at INTEGER NOT NULL,
+                linked_by TEXT,
+                PRIMARY KEY (session_id, bead_id)
+            );
+            CREATE TABLE bead_snapshots (
+                session_id TEXT NOT NULL,
+                bead_id TEXT NOT NULL,
+                data_json TEXT NOT NULL,
+                fetched_at INTEGER NOT NULL,
+                PRIMARY KEY (session_id, bead_id)
+            );
+            INSERT INTO user_preferences (namespace, ready_announcements, updated_at) VALUES ('default', 1, 0);
+            PRAGMA user_version = 6;
+        `)
+        seedDb.close()
+
+        const store = new Store(dbPath)
+        const prefs = store.userPreferences.get('default')
+        expect(prefs.permissionNotifications).toBe(true)
+        expect(prefs.errorNotifications).toBe(true)
+        expect(prefs.readyAnnouncements).toBe(true)
+
+        const verifyDb = new Database(dbPath, { create: false, readwrite: false, strict: true })
+        const columns = verifyDb.prepare('PRAGMA table_info(user_preferences)').all() as Array<{ name: string }>
+        const versionRow = verifyDb.prepare('PRAGMA user_version').get() as { user_version: number }
+        verifyDb.close()
+
+        const columnNames = columns.map((c) => c.name)
+        expect(columnNames).toContain('permission_notifications')
+        expect(columnNames).toContain('error_notifications')
+        expect(versionRow.user_version).toBe(8)
+
+        rmSync(dir, { recursive: true, force: true })
+    })
+
+    it('fresh DB includes permission_notifications and error_notifications with defaults', () => {
+        const store = new Store(':memory:')
+        const prefs = store.userPreferences.get('default')
+        expect(prefs.readyAnnouncements).toBe(true)
+        expect(prefs.permissionNotifications).toBe(true)
+        expect(prefs.errorNotifications).toBe(true)
+    })
+
+    it('UserPreferencesStore.update sets permissionNotifications correctly', () => {
+        const store = new Store(':memory:')
+        store.userPreferences.update('default', { permissionNotifications: false })
+        const prefs = store.userPreferences.get('default')
+        expect(prefs.permissionNotifications).toBe(false)
+        expect(prefs.readyAnnouncements).toBe(true)
+    })
+
     it('migrates v5 sessions to v6 and backfills sort_order by updated_at desc', () => {
         const dir = mkdtempSync(join(tmpdir(), 'hapi-store-migration-'))
         const dbPath = join(dir, 'store.sqlite')
@@ -356,7 +479,7 @@ describe('Store sessions/machines/messages', () => {
 
         expect(columns.some((column) => column.name === 'sort_order')).toBe(true)
         expect(indexes.some((index) => index.name === 'idx_sessions_namespace_sort_order')).toBe(true)
-        expect(versionRow.user_version).toBe(7)
+        expect(versionRow.user_version).toBe(8)
         expect(columns.some((column) => column.name === 'parent_session_id')).toBe(true)
         expect(indexes.some((index) => index.name === 'idx_sessions_parent')).toBe(true)
 

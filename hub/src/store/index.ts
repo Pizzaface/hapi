@@ -28,7 +28,7 @@ export { SessionStore } from './sessionStore'
 export { SessionBeadStore } from './sessionBeadStore'
 export { UserStore } from './userStore'
 
-const SCHEMA_VERSION: number = 7
+const SCHEMA_VERSION: number = 8
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -154,6 +154,12 @@ export class Store {
             this.setUserVersion(version)
         }
 
+        if (version < 8) {
+            this.migrateFromV7ToV8()
+            version = 8
+            this.setUserVersion(version)
+        }
+
         if (version !== SCHEMA_VERSION) {
             throw this.buildSchemaMismatchError(version)
         }
@@ -239,6 +245,8 @@ export class Store {
             CREATE TABLE IF NOT EXISTS user_preferences (
                 namespace TEXT PRIMARY KEY,
                 ready_announcements INTEGER NOT NULL DEFAULT 1,
+                permission_notifications INTEGER NOT NULL DEFAULT 1,
+                error_notifications INTEGER NOT NULL DEFAULT 1,
                 updated_at INTEGER NOT NULL
             );
 
@@ -429,6 +437,24 @@ export class Store {
         this.db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)')
     }
 
+    private migrateFromV7ToV8(): void {
+        const columns = this.getUserPreferencesColumnNames()
+        try {
+            this.db.exec('BEGIN')
+            if (!columns.has('permission_notifications')) {
+                this.db.exec('ALTER TABLE user_preferences ADD COLUMN permission_notifications INTEGER NOT NULL DEFAULT 1')
+            }
+            if (!columns.has('error_notifications')) {
+                this.db.exec('ALTER TABLE user_preferences ADD COLUMN error_notifications INTEGER NOT NULL DEFAULT 1')
+            }
+            this.db.exec('COMMIT')
+        } catch (error) {
+            this.db.exec('ROLLBACK')
+            const message = error instanceof Error ? error.message : String(error)
+            throw new Error(`SQLite schema migration v7->v8 failed: ${message}`)
+        }
+    }
+
     private getMachineColumnNames(): Set<string> {
         const rows = this.db.prepare('PRAGMA table_info(machines)').all() as Array<{ name: string }>
         return new Set(rows.map((row) => row.name))
@@ -436,6 +462,11 @@ export class Store {
 
     private getSessionColumnNames(): Set<string> {
         const rows = this.db.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>
+        return new Set(rows.map((row) => row.name))
+    }
+
+    private getUserPreferencesColumnNames(): Set<string> {
+        const rows = this.db.prepare('PRAGMA table_info(user_preferences)').all() as Array<{ name: string }>
         return new Set(rows.map((row) => row.name))
     }
 
