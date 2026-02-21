@@ -67,4 +67,16 @@ describe('spawn_session JSON Schema regression', () => {
         expect(acceptedTypes.has('string'), 'JSON Schema for yolo must accept string type').toBe(true)
         expect(acceptedTypes.has('boolean'), 'JSON Schema for yolo must accept boolean type').toBe(true)
     })
+
+    it('teamId property is present and optional in JSON Schema', () => {
+        const jsonSchema = toJSONSchema(spawnSessionInputSchema, { target: 'draft-7', io: 'input' }) as Record<string, any>
+        const teamIdProp = jsonSchema.properties?.teamId
+
+        expect(teamIdProp).toBeDefined()
+        expect(teamIdProp.type).toBe('string')
+
+        // teamId must NOT be in required
+        const required = jsonSchema.required as string[] | undefined
+        expect(required ?? []).not.toContain('teamId')
+    })
 })

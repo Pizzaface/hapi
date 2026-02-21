@@ -481,6 +481,7 @@ export class ApiSessionClient extends EventEmitter {
         worktreeName?: string
         worktreeBranch?: string
         initialPrompt?: string
+        teamId?: string
     }): Promise<CliSpawnSessionResponse> {
         const response = await (async () => {
             try {
@@ -494,7 +495,8 @@ export class ApiSessionClient extends EventEmitter {
                         sessionType: options.sessionType,
                         worktreeName: options.worktreeName,
                         worktreeBranch: options.worktreeBranch,
-                        initialPrompt: options.initialPrompt
+                        initialPrompt: options.initialPrompt,
+                        teamId: options.teamId
                     },
                     {
                         headers: {

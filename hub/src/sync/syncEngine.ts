@@ -65,6 +65,21 @@ export type RestartResult = {
     error?: string
 }
 
+export type SpawnSessionOptions = {
+    machineId: string
+    directory: string
+    agent?: 'claude' | 'codex' | 'gemini' | 'opencode'
+    model?: string
+    yolo?: boolean
+    sessionType?: 'simple' | 'worktree'
+    worktreeName?: string
+    worktreeBranch?: string
+    initialPrompt?: string
+    resumeSessionId?: string
+    teamId?: string
+    namespace?: string
+}
+
 export class SyncEngine {
     private readonly store: Store
     private readonly eventPublisher: EventPublisher
@@ -445,18 +460,22 @@ export class SyncEngine {
         this.sessionCache.applySessionConfig(sessionId, applied)
     }
 
-    async spawnSession(
-        machineId: string,
-        directory: string,
-        agent: 'claude' | 'codex' | 'gemini' | 'opencode' = 'claude',
-        model?: string,
-        yolo?: boolean,
-        sessionType?: 'simple' | 'worktree',
-        worktreeName?: string,
-        worktreeBranch?: string,
-        initialPrompt?: string,
-        resumeSessionId?: string
-    ): Promise<SpawnSessionResult> {
+    async spawnSession(opts: SpawnSessionOptions): Promise<SpawnSessionResult> {
+        const {
+            machineId,
+            directory,
+            agent = 'claude',
+            model,
+            yolo,
+            sessionType,
+            worktreeName,
+            worktreeBranch,
+            initialPrompt,
+            resumeSessionId,
+            teamId,
+            namespace
+        } = opts
+
         const spawnResult = await this.rpcGateway.spawnSession(
             machineId,
             directory,
@@ -473,11 +492,23 @@ export class SyncEngine {
         }
 
         const normalizedPrompt = typeof initialPrompt === 'string' ? initialPrompt.trim() : ''
-        if (!normalizedPrompt) {
+        const needsPromptDelivery = normalizedPrompt.length > 0
+        const needsTeamJoin = typeof teamId === 'string' && teamId.length > 0 && typeof namespace === 'string'
+
+        if (!needsPromptDelivery && !needsTeamJoin) {
             return spawnResult
         }
 
         const becameActive = await this.waitForSessionActive(spawnResult.sessionId, 15_000)
+
+        if (needsTeamJoin) {
+            this.tryJoinTeam(teamId!, spawnResult.sessionId, namespace!)
+        }
+
+        if (!needsPromptDelivery) {
+            return spawnResult
+        }
+
         if (!becameActive) {
             console.warn(`[SyncEngine] Initial prompt delivery timed out for session ${spawnResult.sessionId}`)
             return {
@@ -507,6 +538,33 @@ export class SyncEngine {
                 initialPromptDelivery: 'timed_out'
             }
         }
+    }
+
+    private tryJoinTeam(teamId: string, sessionId: string, namespace: string): void {
+        const MAX_ATTEMPTS = 3
+        const DELAY_MS = 500
+
+        const attempt = (n: number) => {
+            try {
+                const joined = this.store.teams.addMember(teamId, sessionId, namespace)
+                if (joined) {
+                    return
+                }
+                console.warn(`[SyncEngine] Team join returned false for session ${sessionId} → team ${teamId}`)
+            } catch (error) {
+                if (n < MAX_ATTEMPTS) {
+                    console.warn(
+                        `[SyncEngine] Team join attempt ${n}/${MAX_ATTEMPTS} failed for session ${sessionId} → team ${teamId}: ${error instanceof Error ? error.message : String(error)}. Retrying in ${DELAY_MS}ms…`
+                    )
+                    setTimeout(() => attempt(n + 1), DELAY_MS)
+                    return
+                }
+                console.warn(
+                    `[SyncEngine] Team join failed after ${MAX_ATTEMPTS} attempts for session ${sessionId} → team ${teamId}: ${error instanceof Error ? error.message : String(error)}`
+                )
+            }
+        }
+        attempt(1)
     }
 
     async resumeSession(sessionId: string, namespace: string): Promise<ResumeSessionResult> {

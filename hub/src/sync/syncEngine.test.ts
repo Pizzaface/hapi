@@ -154,17 +154,12 @@ describe('SyncEngine.spawnSession initialPrompt', () => {
                 return { type: 'success', sessionId: spawnedSession.id }
             })
 
-            const result = await ctx.engine.spawnSession(
-                'machine-1',
-                '/tmp/repo',
-                'codex',
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                'Solve this task'
-            )
+            const result = await ctx.engine.spawnSession({
+                machineId: 'machine-1',
+                directory: '/tmp/repo',
+                agent: 'codex',
+                initialPrompt: 'Solve this task'
+            })
 
             expect(result).toEqual({
                 type: 'success',
@@ -204,7 +199,7 @@ describe('SyncEngine.spawnSession initialPrompt', () => {
                 sessionId: 'spawned-session'
             }))
 
-            const result = await ctx.engine.spawnSession('machine-1', '/tmp/repo')
+            const result = await ctx.engine.spawnSession({ machineId: 'machine-1', directory: '/tmp/repo' })
 
             expect(result).toEqual({
                 type: 'success',
@@ -228,17 +223,11 @@ describe('SyncEngine.spawnSession initialPrompt', () => {
                 sessionId: 'spawned-timeout'
             }))
 
-            const result = await ctx.engine.spawnSession(
-                'machine-1',
-                '/tmp/repo',
-                'claude',
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                'Plan this refactor'
-            )
+            const result = await ctx.engine.spawnSession({
+                machineId: 'machine-1',
+                directory: '/tmp/repo',
+                initialPrompt: 'Plan this refactor'
+            })
 
             expect(result).toEqual({
                 type: 'success',
@@ -266,17 +255,11 @@ describe('SyncEngine.spawnSession initialPrompt', () => {
                 sessionId: 'spawned-empty'
             }))
 
-            const result = await ctx.engine.spawnSession(
-                'machine-1',
-                '/tmp/repo',
-                'claude',
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                '   '
-            )
+            const result = await ctx.engine.spawnSession({
+                machineId: 'machine-1',
+                directory: '/tmp/repo',
+                initialPrompt: '   '
+            })
 
             expect(result).toEqual({
                 type: 'success',

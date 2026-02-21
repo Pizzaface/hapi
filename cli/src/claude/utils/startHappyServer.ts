@@ -23,6 +23,7 @@ type SpawnSessionInput = {
     worktreeName?: string
     worktreeBranch?: string
     initialPrompt?: string
+    teamId?: string
 }
 
 // Exported for JSON Schema regression testing. Avoid TS instantiation depth issues by widening the type.
@@ -36,6 +37,7 @@ export const spawnSessionInputSchema: z.ZodTypeAny = z.object({
     worktreeName: z.string().optional().describe('Optional worktree name hint (worktree sessions only)'),
     worktreeBranch: z.string().optional().describe('Optional worktree branch name (worktree sessions only)'),
     initialPrompt: z.string().max(100_000).optional().describe('Optional initial prompt/task to send after spawn (max 100000 chars)'),
+    teamId: z.string().optional().describe('Optional team ID to auto-join the spawned session to a team'),
 });
 
 export async function startHappyServer(client: ApiSessionClient) {
@@ -102,7 +104,8 @@ export async function startHappyServer(client: ApiSessionClient) {
                 sessionType: input.sessionType,
                 worktreeName: input.worktreeName,
                 worktreeBranch: input.worktreeBranch,
-                initialPrompt: input.initialPrompt
+                initialPrompt: input.initialPrompt,
+                teamId: input.teamId
             })
 
             if (result.type !== 'success') {

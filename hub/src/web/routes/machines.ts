@@ -14,7 +14,8 @@ const spawnBodySchema = z.object({
     sessionType: z.enum(['simple', 'worktree']).optional(),
     worktreeName: z.string().optional(),
     worktreeBranch: z.string().optional(),
-    initialPrompt: z.string().max(INITIAL_PROMPT_MAX_LENGTH).optional()
+    initialPrompt: z.string().max(INITIAL_PROMPT_MAX_LENGTH).optional(),
+    teamId: z.string().optional()
 })
 
 const pathsExistsSchema = z.object({
@@ -74,17 +75,20 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null): Ho
             return c.json({ error: mapSpawnBodyValidationError(parsed.error) }, 400)
         }
 
-        const result = await engine.spawnSession(
+        const namespace = c.get('namespace')
+        const result = await engine.spawnSession({
             machineId,
-            parsed.data.directory,
-            parsed.data.agent,
-            parsed.data.model,
-            parsed.data.yolo,
-            parsed.data.sessionType,
-            parsed.data.worktreeName,
-            parsed.data.worktreeBranch,
-            parsed.data.initialPrompt
-        )
+            directory: parsed.data.directory,
+            agent: parsed.data.agent,
+            model: parsed.data.model,
+            yolo: parsed.data.yolo,
+            sessionType: parsed.data.sessionType,
+            worktreeName: parsed.data.worktreeName,
+            worktreeBranch: parsed.data.worktreeBranch,
+            initialPrompt: parsed.data.initialPrompt,
+            teamId: parsed.data.teamId,
+            namespace
+        })
         return c.json(result)
     })
 
