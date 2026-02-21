@@ -1210,4 +1210,248 @@ describe('web integration routes', () => {
             ctx.stop()
         }
     })
+
+    it('POST /cli/sessions/:targetId/message delivers inter-agent message from parent to child', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const namespace = 'alpha'
+            const cliToken = `${CLI_TOKEN}:${namespace}`
+
+            const parent = ctx.engine.getOrCreateSession(
+                'parent-session',
+                { path: '/repo', host: 'host-a', name: 'Parent Agent' },
+                null,
+                namespace
+            )
+            ctx.engine.handleSessionAlive({ sid: parent.id, time: Date.now() })
+
+            const child = ctx.engine.getOrCreateSession(
+                'child-session',
+                { path: '/repo', host: 'host-a' },
+                null,
+                namespace,
+                parent.id
+            )
+            ctx.engine.handleSessionAlive({ sid: child.id, time: Date.now() })
+
+            const response = await ctx.app.request(`/cli/sessions/${child.id}/message`, {
+                method: 'POST',
+                headers: cliJsonHeaders(cliToken),
+                body: JSON.stringify({
+                    senderSessionId: parent.id,
+                    content: 'Hello from parent'
+                })
+            })
+
+            expect(response.status).toBe(200)
+            const body = await response.json() as { status: string; messageId: string }
+            expect(body.status).toBe('delivered')
+
+            const messages = ctx.store.messages.getMessages(child.id, 10)
+            expect(messages).toHaveLength(1)
+            expect(messages[0]?.content).toMatchObject({
+                role: 'user',
+                content: {
+                    type: 'text',
+                    text: expect.stringContaining('Hello from parent')
+                },
+                meta: {
+                    sentFrom: 'inter-agent'
+                }
+            })
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('POST /cli/sessions/:targetId/message delivers inter-agent message from child to parent', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const namespace = 'alpha'
+            const cliToken = `${CLI_TOKEN}:${namespace}`
+
+            const parent = ctx.engine.getOrCreateSession(
+                'parent-session',
+                { path: '/repo', host: 'host-a' },
+                null,
+                namespace
+            )
+
+            const child = ctx.engine.getOrCreateSession(
+                'child-session',
+                { path: '/repo', host: 'host-a' },
+                null,
+                namespace,
+                parent.id
+            )
+            ctx.engine.handleSessionAlive({ sid: child.id, time: Date.now() })
+
+            const response = await ctx.app.request(`/cli/sessions/${parent.id}/message`, {
+                method: 'POST',
+                headers: cliJsonHeaders(cliToken),
+                body: JSON.stringify({
+                    senderSessionId: child.id,
+                    content: 'Report from child'
+                })
+            })
+
+            expect(response.status).toBe(200)
+            const body = await response.json() as { status: string }
+            expect(body.status).toBe('queued')
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('POST /cli/sessions/:targetId/message rejects unauthorized peer messaging', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const namespace = 'alpha'
+            const cliToken = `${CLI_TOKEN}:${namespace}`
+
+            const sessionA = ctx.engine.getOrCreateSession(
+                'peer-a',
+                { path: '/repo', host: 'host-a' },
+                null,
+                namespace
+            )
+            const sessionB = ctx.engine.getOrCreateSession(
+                'peer-b',
+                { path: '/repo', host: 'host-a' },
+                null,
+                namespace
+            )
+            ctx.engine.handleSessionAlive({ sid: sessionA.id, time: Date.now() })
+            ctx.engine.handleSessionAlive({ sid: sessionB.id, time: Date.now() })
+
+            const response = await ctx.app.request(`/cli/sessions/${sessionB.id}/message`, {
+                method: 'POST',
+                headers: cliJsonHeaders(cliToken),
+                body: JSON.stringify({
+                    senderSessionId: sessionA.id,
+                    content: 'Unauthorized peer message'
+                })
+            })
+
+            expect(response.status).toBe(403)
+            expect(await response.json()).toMatchObject({
+                code: 'not_authorized'
+            })
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('POST /cli/sessions/:targetId/message rejects invalid body', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const cliToken = `${CLI_TOKEN}:alpha`
+
+            const response = await ctx.app.request('/cli/sessions/some-target/message', {
+                method: 'POST',
+                headers: cliJsonHeaders(cliToken),
+                body: JSON.stringify({ content: '' })
+            })
+
+            expect(response.status).toBe(400)
+            expect(await response.json()).toEqual({ error: 'Invalid body' })
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('POST /cli/sessions/:targetId/message returns 404 for missing target', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const namespace = 'alpha'
+            const cliToken = `${CLI_TOKEN}:${namespace}`
+
+            const sender = ctx.engine.getOrCreateSession(
+                'sender',
+                { path: '/repo', host: 'host-a' },
+                null,
+                namespace
+            )
+
+            const response = await ctx.app.request('/cli/sessions/non-existent-target/message', {
+                method: 'POST',
+                headers: cliJsonHeaders(cliToken),
+                body: JSON.stringify({
+                    senderSessionId: sender.id,
+                    content: 'Message to missing session'
+                })
+            })
+
+            expect(response.status).toBe(404)
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('GET /cli/sessions returns namespace-scoped session list', async () => {
+        const ctx = createTestContext()
+
+        try {
+            const alphaToken = `${CLI_TOKEN}:alpha`
+            const betaToken = `${CLI_TOKEN}:beta`
+
+            const alphaParent = ctx.engine.getOrCreateSession(
+                'alpha-parent',
+                { path: '/repo', host: 'host-a', name: 'Parent', flavor: 'claude', machineId: 'machine-1' },
+                null,
+                'alpha'
+            )
+            const alphaChild = ctx.engine.getOrCreateSession(
+                'alpha-child',
+                { path: '/repo', host: 'host-a', name: 'Child' },
+                null,
+                'alpha',
+                alphaParent.id
+            )
+            ctx.engine.getOrCreateSession(
+                'beta-session',
+                { path: '/repo', host: 'host-b' },
+                null,
+                'beta'
+            )
+            ctx.engine.handleSessionAlive({ sid: alphaParent.id, time: Date.now() })
+
+            const alphaResponse = await ctx.app.request('/cli/sessions', {
+                headers: cliHeaders(alphaToken)
+            })
+            expect(alphaResponse.status).toBe(200)
+            const alphaBody = await alphaResponse.json() as { sessions: Array<{ id: string; parentSessionId: string | null; active: boolean }> }
+            expect(alphaBody.sessions).toHaveLength(2)
+            expect(alphaBody.sessions.map((s) => s.id).sort()).toEqual([alphaParent.id, alphaChild.id].sort())
+
+            const parentEntry = alphaBody.sessions.find((s) => s.id === alphaParent.id)
+            expect(parentEntry?.parentSessionId).toBeNull()
+            expect(parentEntry?.active).toBe(true)
+
+            const childEntry = alphaBody.sessions.find((s) => s.id === alphaChild.id)
+            expect(childEntry?.parentSessionId).toBe(alphaParent.id)
+
+            const activeResponse = await ctx.app.request('/cli/sessions?active=true', {
+                headers: cliHeaders(alphaToken)
+            })
+            expect(activeResponse.status).toBe(200)
+            const activeBody = await activeResponse.json() as { sessions: Array<{ id: string }> }
+            expect(activeBody.sessions).toHaveLength(1)
+            expect(activeBody.sessions[0]?.id).toBe(alphaParent.id)
+
+            const betaResponse = await ctx.app.request('/cli/sessions', {
+                headers: cliHeaders(betaToken)
+            })
+            expect(betaResponse.status).toBe(200)
+            const betaBody = await betaResponse.json() as { sessions: Array<{ id: string }> }
+            expect(betaBody.sessions).toHaveLength(1)
+        } finally {
+            ctx.stop()
+        }
+    })
 })

@@ -55,8 +55,8 @@ export class SessionCache {
         return this.getSessions().filter((session) => session.active)
     }
 
-    getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, namespace: string): Session {
-        const stored = this.store.sessions.getOrCreateSession(tag, metadata, agentState, namespace)
+    getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, namespace: string, parentSessionId?: string | null): Session {
+        const stored = this.store.sessions.getOrCreateSession(tag, metadata, agentState, namespace, parentSessionId)
         return this.refreshSession(stored.id, stored) ?? (() => { throw new Error('Failed to load session') })()
     }
 
@@ -127,7 +127,8 @@ export class SessionCache {
             thinkingAt: existing?.thinkingAt ?? 0,
             todos,
             permissionMode: existing?.permissionMode,
-            modelMode: existing?.modelMode
+            modelMode: existing?.modelMode,
+            parentSessionId: stored.parentSessionId
         }
 
         this.sessions.set(sessionId, session)
@@ -397,6 +398,10 @@ export class SessionCache {
             if (!sortOrderUpdated) {
                 throw new Error('Failed to preserve session sort order during merge')
             }
+        }
+
+        if (oldStored.parentSessionId && !newStored.parentSessionId) {
+            this.store.sessions.setParentSessionId(newSessionId, oldStored.parentSessionId, namespace)
         }
 
         this.store.sessionBeads.reassignSession(oldSessionId, newSessionId)

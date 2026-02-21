@@ -356,8 +356,50 @@ describe('Store sessions/machines/messages', () => {
 
         expect(columns.some((column) => column.name === 'sort_order')).toBe(true)
         expect(indexes.some((index) => index.name === 'idx_sessions_namespace_sort_order')).toBe(true)
-        expect(versionRow.user_version).toBe(6)
+        expect(versionRow.user_version).toBe(7)
+        expect(columns.some((column) => column.name === 'parent_session_id')).toBe(true)
+        expect(indexes.some((index) => index.name === 'idx_sessions_parent')).toBe(true)
 
         rmSync(dir, { recursive: true, force: true })
+    })
+
+    it('stores and retrieves parent_session_id on session creation', () => {
+        const store = new Store(':memory:')
+
+        const parent = store.sessions.getOrCreateSession('parent-tag', { path: '/repo', host: 'host' }, null, 'alpha')
+        const child = store.sessions.getOrCreateSession('child-tag', { path: '/repo', host: 'host' }, null, 'alpha', parent.id)
+
+        expect(parent.parentSessionId).toBeNull()
+        expect(child.parentSessionId).toBe(parent.id)
+
+        const childFromDb = store.sessions.getSession(child.id)
+        expect(childFromDb?.parentSessionId).toBe(parent.id)
+    })
+
+    it('finds child sessions by parent_session_id', () => {
+        const store = new Store(':memory:')
+
+        const parent = store.sessions.getOrCreateSession('parent-tag', { path: '/repo', host: 'host' }, null, 'alpha')
+        const child1 = store.sessions.getOrCreateSession('child-1', { path: '/repo', host: 'host' }, null, 'alpha', parent.id)
+        const child2 = store.sessions.getOrCreateSession('child-2', { path: '/repo', host: 'host' }, null, 'alpha', parent.id)
+        store.sessions.getOrCreateSession('unrelated', { path: '/repo', host: 'host' }, null, 'alpha')
+
+        const children = store.sessions.getChildSessions(parent.id, 'alpha')
+        expect(children.map((s) => s.id).sort()).toEqual([child1.id, child2.id].sort())
+    })
+
+    it('setParentSessionId updates existing session', () => {
+        const store = new Store(':memory:')
+
+        const parent = store.sessions.getOrCreateSession('parent-tag', { path: '/repo', host: 'host' }, null, 'alpha')
+        const child = store.sessions.getOrCreateSession('child-tag', { path: '/repo', host: 'host' }, null, 'alpha')
+
+        expect(child.parentSessionId).toBeNull()
+
+        const updated = store.sessions.setParentSessionId(child.id, parent.id, 'alpha')
+        expect(updated).toBe(true)
+
+        const childFromDb = store.sessions.getSession(child.id)
+        expect(childFromDb?.parentSessionId).toBe(parent.id)
     })
 })

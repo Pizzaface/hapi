@@ -28,7 +28,7 @@ export { SessionStore } from './sessionStore'
 export { SessionBeadStore } from './sessionBeadStore'
 export { UserStore } from './userStore'
 
-const SCHEMA_VERSION: number = 6
+const SCHEMA_VERSION: number = 7
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -148,6 +148,12 @@ export class Store {
             this.setUserVersion(version)
         }
 
+        if (version < 7) {
+            this.migrateFromV6ToV7()
+            version = 7
+            this.setUserVersion(version)
+        }
+
         if (version !== SCHEMA_VERSION) {
             throw this.buildSchemaMismatchError(version)
         }
@@ -173,11 +179,13 @@ export class Store {
                 active INTEGER DEFAULT 0,
                 active_at INTEGER,
                 seq INTEGER DEFAULT 0,
-                sort_order TEXT
+                sort_order TEXT,
+                parent_session_id TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_sessions_tag ON sessions(tag);
             CREATE INDEX IF NOT EXISTS idx_sessions_tag_namespace ON sessions(tag, namespace);
             CREATE INDEX IF NOT EXISTS idx_sessions_namespace_sort_order ON sessions(namespace, sort_order, id);
+            CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);
 
             CREATE TABLE IF NOT EXISTS machines (
                 id TEXT PRIMARY KEY,
@@ -409,6 +417,16 @@ export class Store {
             const message = error instanceof Error ? error.message : String(error)
             throw new Error(`SQLite schema migration v5->v6 failed: ${message}`)
         }
+    }
+
+    private migrateFromV6ToV7(): void {
+        const sessionColumns = this.getSessionColumnNames()
+
+        if (!sessionColumns.has('parent_session_id')) {
+            this.db.exec('ALTER TABLE sessions ADD COLUMN parent_session_id TEXT')
+        }
+
+        this.db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)')
     }
 
     private getMachineColumnNames(): Set<string> {

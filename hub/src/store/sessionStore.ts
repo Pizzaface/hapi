@@ -4,11 +4,13 @@ import type { StoredSession, VersionedUpdateResult } from './types'
 import {
     deleteSessionBatch,
     deleteSession,
+    getChildSessions,
     getOrCreateSession,
     getSession,
     getSessionByNamespace,
     getSessions,
     getSessionsByNamespace,
+    setParentSessionId,
     setSessionTodos,
     updateSessionAgentState,
     updateSessionMetadata,
@@ -22,8 +24,8 @@ export class SessionStore {
         this.db = db
     }
 
-    getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, namespace: string): StoredSession {
-        return getOrCreateSession(this.db, tag, metadata, agentState, namespace)
+    getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, namespace: string, parentSessionId?: string | null): StoredSession {
+        return getOrCreateSession(this.db, tag, metadata, agentState, namespace, parentSessionId)
     }
 
     updateSessionMetadata(
@@ -75,5 +77,13 @@ export class SessionStore {
 
     deleteSessionBatch(ids: string[], namespace: string): number {
         return deleteSessionBatch(this.db, ids, namespace)
+    }
+
+    setParentSessionId(id: string, parentSessionId: string | null, namespace: string): boolean {
+        return setParentSessionId(this.db, id, parentSessionId, namespace)
+    }
+
+    getChildSessions(parentSessionId: string, namespace: string): StoredSession[] {
+        return getChildSessions(this.db, parentSessionId, namespace)
     }
 }

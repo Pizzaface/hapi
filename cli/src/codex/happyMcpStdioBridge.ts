@@ -125,6 +125,36 @@ export async function runHappyMcpStdioBridge(argv: string[]): Promise<void> {
       inputSchema: spawnSessionInputSchema,
     });
 
+    const sendMessageInputSchema: z.ZodTypeAny = z.object({
+      targetSessionId: z.string().min(1).describe('The session ID of the target session to send a message to'),
+      content: z.string().min(1).max(100_000).describe('The message content to send (max 100KB)'),
+      hopCount: z.number().int().min(0).max(10).optional().describe('Hop count for loop prevention (default 0, max 10)')
+    });
+
+    registerForwardTool('send_message_to_session', {
+      description: 'Send an inter-agent message to another HAPI session. Only parent↔child messaging is allowed.',
+      title: 'Send Inter-Agent Message',
+      inputSchema: sendMessageInputSchema,
+    });
+
+    const listSessionsInputSchema: z.ZodTypeAny = z.object({});
+
+    registerForwardTool('list_sessions', {
+      description: 'List all sessions visible to this agent in the current namespace.',
+      title: 'List HAPI Sessions',
+      inputSchema: listSessionsInputSchema,
+    });
+
+    const getSessionInfoInputSchema: z.ZodTypeAny = z.object({
+      sessionId: z.string().min(1).describe('The session ID to get information about'),
+    });
+
+    registerForwardTool('get_session_info', {
+      description: 'Get detailed information about a specific HAPI session by ID.',
+      title: 'Get Session Info',
+      inputSchema: getSessionInfoInputSchema,
+    });
+
     // Start STDIO transport
     const stdio = new StdioServerTransport();
     await server.connect(stdio);

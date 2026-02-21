@@ -141,10 +141,18 @@ export const SessionSchema = z.object({
     thinkingAt: z.number(),
     todos: TodosSchema.optional(),
     permissionMode: PermissionModeSchema.optional(),
-    modelMode: ModelModeSchema.optional()
+    modelMode: ModelModeSchema.optional(),
+    parentSessionId: z.string().nullable().optional()
 })
 
 export type Session = z.infer<typeof SessionSchema>
+
+export const InterAgentMessageSchema = z.object({
+    content: z.string().min(1).max(100_000),
+    hopCount: z.number().int().min(0).max(10).optional()
+})
+
+export type InterAgentMessage = z.infer<typeof InterAgentMessageSchema>
 
 const SessionEventBaseSchema = z.object({
     namespace: z.string().optional()

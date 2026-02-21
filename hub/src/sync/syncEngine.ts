@@ -252,8 +252,8 @@ export class SyncEngine {
         this.machineCache.reloadAll()
     }
 
-    getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, namespace: string): Session {
-        return this.sessionCache.getOrCreateSession(tag, metadata, agentState, namespace)
+    getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, namespace: string, parentSessionId?: string | null): Session {
+        return this.sessionCache.getOrCreateSession(tag, metadata, agentState, namespace, parentSessionId)
     }
 
     getOrCreateMachine(id: string, metadata: unknown, runnerState: unknown, namespace: string): Machine {
@@ -277,6 +277,56 @@ export class SyncEngine {
         }
     ): Promise<void> {
         await this.messageService.sendMessage(sessionId, payload)
+    }
+
+    async sendInterAgentMessage(
+        senderSessionId: string,
+        targetSessionId: string,
+        content: string,
+        namespace: string,
+        hopCount: number = 0
+    ): Promise<
+        | { status: 'delivered'; messageId: string }
+        | { status: 'queued'; messageId: string }
+        | { status: 'error'; code: string; message: string }
+    > {
+        if (content.length > 100_000) {
+            return { status: 'error', code: 'message_too_large', message: 'Message exceeds 100KB limit' }
+        }
+
+        if (hopCount > 10) {
+            return { status: 'error', code: 'hop_limit_exceeded', message: 'Message exceeded maximum hop count' }
+        }
+
+        const senderSession = this.getSessionByNamespace(senderSessionId, namespace)
+        if (!senderSession) {
+            return { status: 'error', code: 'sender_not_found', message: 'Sender session not found' }
+        }
+
+        const targetSession = this.getSessionByNamespace(targetSessionId, namespace)
+        if (!targetSession) {
+            return { status: 'error', code: 'target_not_found', message: 'Target session not found' }
+        }
+
+        const isParentOfTarget = targetSession.parentSessionId === senderSessionId
+        const isChildOfSender = senderSession.parentSessionId === targetSessionId
+        if (!isParentOfTarget && !isChildOfSender) {
+            return { status: 'error', code: 'not_authorized', message: 'Sender is not authorized to message this session (must be parent or child)' }
+        }
+
+        const senderName = senderSession.metadata?.name ?? senderSessionId
+        const text = `[Inter-agent message from ${senderName} (${senderSessionId})]\n\n${content}`
+
+        const messageId = await this.messageService.sendMessage(targetSessionId, {
+            text,
+            sentFrom: 'inter-agent'
+        })
+
+        const isActive = targetSession.active
+        return {
+            status: isActive ? 'delivered' : 'queued',
+            messageId
+        }
     }
 
     async approvePermission(

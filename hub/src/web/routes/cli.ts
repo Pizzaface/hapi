@@ -37,6 +37,12 @@ const restartSessionsSchema = z.object({
     machineId: z.string().min(1).optional()
 })
 
+const interAgentMessageSchema = z.object({
+    senderSessionId: z.string().min(1),
+    content: z.string().min(1).max(100_000),
+    hopCount: z.number().int().min(0).max(10).optional()
+})
+
 const getMessagesQuerySchema = z.object({
     afterSeq: z.coerce.number().int().min(0),
     limit: z.coerce.number().int().min(1).max(200).optional()
@@ -267,6 +273,69 @@ export function createCliRoutes(getSyncEngine: () => SyncEngine | null): Hono<Cl
         })
 
         return c.json({ results })
+    })
+
+    app.post('/sessions/:targetId/message', async (c) => {
+        const engine = getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not ready' }, 503)
+        }
+
+        const targetId = c.req.param('targetId')
+        const namespace = c.get('namespace')
+
+        const json = await c.req.json().catch(() => null)
+        const parsed = interAgentMessageSchema.safeParse(json)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        const result = await engine.sendInterAgentMessage(
+            parsed.data.senderSessionId,
+            targetId,
+            parsed.data.content,
+            namespace,
+            parsed.data.hopCount ?? 0
+        )
+
+        if (result.status === 'error') {
+            const statusCode = result.code === 'sender_not_found' || result.code === 'target_not_found' ? 404
+                : result.code === 'not_authorized' ? 403
+                : result.code === 'message_too_large' || result.code === 'hop_limit_exceeded' ? 400
+                : 500
+            return c.json({ error: result.message, code: result.code }, statusCode)
+        }
+
+        return c.json(result)
+    })
+
+    app.get('/sessions', (c) => {
+        const engine = getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not ready' }, 503)
+        }
+
+        const namespace = c.get('namespace')
+        const sessions = engine.getSessionsByNamespace(namespace)
+
+        const activeOnly = c.req.query('active')
+        const filtered = activeOnly === 'true'
+            ? sessions.filter((s) => s.active)
+            : sessions
+
+        const summaries = filtered.map((s) => ({
+            id: s.id,
+            active: s.active,
+            name: s.metadata?.name ?? null,
+            path: s.metadata?.path ?? null,
+            flavor: s.metadata?.flavor ?? null,
+            machineId: s.metadata?.machineId ?? null,
+            parentSessionId: s.parentSessionId ?? null,
+            createdAt: s.createdAt,
+            updatedAt: s.updatedAt
+        }))
+
+        return c.json({ sessions: summaries })
     })
 
     return app

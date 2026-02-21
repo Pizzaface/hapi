@@ -518,6 +518,94 @@ export class ApiSessionClient extends EventEmitter {
         return parsed.data
     }
 
+    async sendInterAgentMessage(options: {
+        targetSessionId: string
+        content: string
+        hopCount?: number
+    }): Promise<{ status: 'delivered' | 'queued'; messageId: string } | { status: 'error'; code: string; message: string }> {
+        try {
+            const response = await axios.post(
+                `${configuration.apiUrl}/cli/sessions/${encodeURIComponent(options.targetSessionId)}/message`,
+                {
+                    senderSessionId: this.sessionId,
+                    content: options.content,
+                    hopCount: options.hopCount
+                },
+                {
+                    headers: {
+                        Authorization: `Bearer ${this.token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 30_000
+                }
+            )
+            return response.data as { status: 'delivered' | 'queued'; messageId: string }
+        } catch (error) {
+            const info = extractErrorInfo(error)
+            const responseData = (error as any)?.response?.data as { code?: string; error?: string } | undefined
+            return {
+                status: 'error',
+                code: responseData?.code ?? 'unknown',
+                message: responseData?.error ?? info.message
+            }
+        }
+    }
+
+    async listActiveSessions(): Promise<Array<{
+        id: string
+        active: boolean
+        name: string | null
+        path: string | null
+        flavor: string | null
+        machineId: string | null
+        parentSessionId: string | null
+        createdAt: number
+        updatedAt: number
+    }>> {
+        try {
+            const response = await axios.get(
+                `${configuration.apiUrl}/cli/sessions`,
+                {
+                    headers: {
+                        Authorization: `Bearer ${this.token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 30_000
+                }
+            )
+            const data = response.data as { sessions: Array<{
+                id: string
+                active: boolean
+                name: string | null
+                path: string | null
+                flavor: string | null
+                machineId: string | null
+                parentSessionId: string | null
+                createdAt: number
+                updatedAt: number
+            }> }
+            return data.sessions
+        } catch (error) {
+            const info = extractErrorInfo(error)
+            throw new Error(info.responseErrorText || info.message)
+        }
+    }
+
+    async getSessionInfo(sessionId: string): Promise<{
+        id: string
+        active: boolean
+        name: string | null
+        path: string | null
+        flavor: string | null
+        machineId: string | null
+        parentSessionId: string | null
+        createdAt: number
+        updatedAt: number
+    } | null> {
+        const sessions = await this.listActiveSessions()
+        return sessions.find((s) => s.id === sessionId) ?? null
+    }
+
     sendClaudeSessionMessage(body: RawJSONLines): void {
         let content: MessageContent
 

@@ -23,6 +23,7 @@ type DbSessionRow = {
     active_at: number | null
     seq: number
     sort_order: string | null
+    parent_session_id: string | null
 }
 
 function toStoredSession(row: DbSessionRow): StoredSession {
@@ -42,7 +43,8 @@ function toStoredSession(row: DbSessionRow): StoredSession {
         active: row.active === 1,
         activeAt: row.active_at,
         seq: row.seq,
-        sortOrder: row.sort_order
+        sortOrder: row.sort_order,
+        parentSessionId: row.parent_session_id
     }
 }
 
@@ -51,7 +53,8 @@ export function getOrCreateSession(
     tag: string,
     metadata: unknown,
     agentState: unknown,
-    namespace: string
+    namespace: string,
+    parentSessionId?: string | null
 ): StoredSession {
     const existing = db.prepare(
         'SELECT * FROM sessions WHERE tag = ? AND namespace = ? ORDER BY created_at DESC LIMIT 1'
@@ -84,14 +87,14 @@ export function getOrCreateSession(
             agent_state, agent_state_version,
             todos, todos_updated_at,
             active, active_at, seq,
-            sort_order
+            sort_order, parent_session_id
         ) VALUES (
             @id, @tag, @namespace, NULL, @created_at, @updated_at,
             @metadata, 1,
             @agent_state, 1,
             NULL, NULL,
             0, NULL, 0,
-            @sort_order
+            @sort_order, @parent_session_id
         )
     `).run({
         id,
@@ -101,7 +104,8 @@ export function getOrCreateSession(
         updated_at: now,
         metadata: metadataJson,
         agent_state: agentStateJson,
-        sort_order: sortOrder
+        sort_order: sortOrder,
+        parent_session_id: parentSessionId ?? null
     })
 
     const row = getSession(db, id)
@@ -253,6 +257,39 @@ export function updateSessionSortOrder(
     })
 
     return result.changes === 1
+}
+
+export function setParentSessionId(
+    db: Database,
+    id: string,
+    parentSessionId: string | null,
+    namespace: string
+): boolean {
+    const result = db.prepare(`
+        UPDATE sessions
+        SET parent_session_id = @parent_session_id,
+            seq = seq + 1
+        WHERE id = @id
+          AND namespace = @namespace
+    `).run({
+        id,
+        parent_session_id: parentSessionId,
+        namespace
+    })
+    return result.changes === 1
+}
+
+export function getChildSessions(
+    db: Database,
+    parentSessionId: string,
+    namespace: string
+): StoredSession[] {
+    const rows = db.prepare(
+        `SELECT * FROM sessions
+         WHERE parent_session_id = ? AND namespace = ?
+         ORDER BY created_at ASC`
+    ).all(parentSessionId, namespace) as DbSessionRow[]
+    return rows.map(toStoredSession)
 }
 
 export function deleteSession(db: Database, id: string, namespace: string): boolean {

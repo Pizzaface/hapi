@@ -15,6 +15,7 @@ export type StoredSession = {
     activeAt: number | null
     seq: number
     sortOrder: string | null
+    parentSessionId: string | null
 }
 
 export type StoredMachine = {
