@@ -66,6 +66,7 @@ export type RestartResult = {
 }
 
 export class SyncEngine {
+    private readonly store: Store
     private readonly eventPublisher: EventPublisher
     private readonly sessionCache: SessionCache
     private readonly machineCache: MachineCache
@@ -81,6 +82,7 @@ export class SyncEngine {
         rpcRegistry: RpcRegistry,
         sseManager: SSEManager
     ) {
+        this.store = store
         this.eventPublisher = new EventPublisher(sseManager, (event) => this.resolveNamespace(event))
         this.sessionCache = new SessionCache(store, this.eventPublisher)
         this.machineCache = new MachineCache(store, this.eventPublisher)
@@ -308,10 +310,20 @@ export class SyncEngine {
             return { status: 'error', code: 'target_not_found', message: 'Target session not found' }
         }
 
-        const isParentOfTarget = targetSession.parentSessionId === senderSessionId
-        const isChildOfSender = senderSession.parentSessionId === targetSessionId
-        if (!isParentOfTarget && !isChildOfSender) {
-            return { status: 'error', code: 'not_authorized', message: 'Sender is not authorized to message this session (must be parent or child)' }
+        // Auth cascade:
+        // 1. Sender ownership validated above
+        // 2. Target has acceptAllMessages → allow
+        const targetStored = this.store.sessions.getSession(targetSessionId)
+        if (!targetStored?.acceptAllMessages) {
+            // 3. Direct parent-child relationship → allow
+            const isParentOfTarget = targetSession.parentSessionId === senderSessionId
+            const isChildOfSender = senderSession.parentSessionId === targetSessionId
+            if (!isParentOfTarget && !isChildOfSender) {
+                // 4. Same team → allow
+                if (!this.store.teams.areInSameTeam(senderSessionId, targetSessionId, namespace)) {
+                    return { status: 'error', code: 'not_authorized', message: 'Sender is not authorized to message this session' }
+                }
+            }
         }
 
         const senderName = senderSession.metadata?.name ?? senderSessionId

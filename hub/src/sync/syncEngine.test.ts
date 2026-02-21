@@ -1,3 +1,4 @@
+import type Database from 'bun:sqlite'
 import { describe, expect, it } from 'bun:test'
 import { Store } from '../store'
 import { SyncEngine } from './syncEngine'
@@ -633,6 +634,147 @@ describe('SyncEngine.restartSessions', () => {
                 { sessionId: skipped.id, name: null, status: 'skipped', error: 'not_resumable' },
                 { sessionId: failed.id, name: 'Failing Session', status: 'failed', error: 'resume_failed' }
             ])
+        } finally {
+            ctx.stop()
+        }
+    })
+})
+
+function getDb(store: Store): Database {
+    return (store as unknown as { db: Database }).db
+}
+
+function setAcceptAllMessages(store: Store, sessionId: string, value: boolean): void {
+    getDb(store).prepare('UPDATE sessions SET accept_all_messages = ? WHERE id = ?').run(value ? 1 : 0, sessionId)
+}
+
+describe('SyncEngine.sendInterAgentMessage auth cascade', () => {
+    it('allows parent to message child (existing behavior)', async () => {
+        const ctx = createHarness()
+        try {
+            const ns = 'alpha'
+            const parent = createActiveSession(ctx, ns, 'parent', { path: '/repo', host: 'h' })
+            const child = ctx.engine.getOrCreateSession('child', { path: '/repo', host: 'h' }, null, ns, parent.id)
+            ctx.engine.handleSessionAlive({ sid: child.id, time: Date.now() })
+
+            const result = await ctx.engine.sendInterAgentMessage(parent.id, child.id, 'hello', ns)
+            expect(result.status).toBe('delivered')
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('allows child to message parent (existing behavior)', async () => {
+        const ctx = createHarness()
+        try {
+            const ns = 'alpha'
+            const parent = createActiveSession(ctx, ns, 'parent', { path: '/repo', host: 'h' })
+            const child = ctx.engine.getOrCreateSession('child', { path: '/repo', host: 'h' }, null, ns, parent.id)
+            ctx.engine.handleSessionAlive({ sid: child.id, time: Date.now() })
+
+            const result = await ctx.engine.sendInterAgentMessage(child.id, parent.id, 'hello', ns)
+            expect(result.status).toBe('delivered')
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('rejects messages between unrelated sessions', async () => {
+        const ctx = createHarness()
+        try {
+            const ns = 'alpha'
+            const a = createActiveSession(ctx, ns, 'session-a', { path: '/repo', host: 'h' })
+            const b = createActiveSession(ctx, ns, 'session-b', { path: '/repo', host: 'h' })
+
+            const result = await ctx.engine.sendInterAgentMessage(a.id, b.id, 'hello', ns)
+            expect(result.status).toBe('error')
+            expect((result as { code: string }).code).toBe('not_authorized')
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('allows messaging when target has acceptAllMessages=true', async () => {
+        const ctx = createHarness()
+        try {
+            const ns = 'alpha'
+            const sender = createActiveSession(ctx, ns, 'sender', { path: '/repo', host: 'h' })
+            const target = createActiveSession(ctx, ns, 'target', { path: '/repo', host: 'h' })
+
+            setAcceptAllMessages(ctx.store, target.id, true)
+
+            const result = await ctx.engine.sendInterAgentMessage(sender.id, target.id, 'hello', ns)
+            expect(result.status).toBe('delivered')
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('does not bypass sender validation even with acceptAllMessages', async () => {
+        const ctx = createHarness()
+        try {
+            const ns = 'alpha'
+            const target = createActiveSession(ctx, ns, 'target', { path: '/repo', host: 'h' })
+            setAcceptAllMessages(ctx.store, target.id, true)
+
+            const result = await ctx.engine.sendInterAgentMessage('nonexistent', target.id, 'hello', ns)
+            expect(result.status).toBe('error')
+            expect((result as { code: string }).code).toBe('sender_not_found')
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('allows messaging between team members', async () => {
+        const ctx = createHarness()
+        try {
+            const ns = 'alpha'
+            const a = createActiveSession(ctx, ns, 'team-a', { path: '/repo', host: 'h' })
+            const b = createActiveSession(ctx, ns, 'team-b', { path: '/repo', host: 'h' })
+
+            const team = ctx.store.teams.createTeam('test-team', ns)
+            ctx.store.teams.addMember(team.id, a.id, ns)
+            ctx.store.teams.addMember(team.id, b.id, ns)
+
+            const result = await ctx.engine.sendInterAgentMessage(a.id, b.id, 'hello', ns)
+            expect(result.status).toBe('delivered')
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('rejects messaging between sessions in different teams', async () => {
+        const ctx = createHarness()
+        try {
+            const ns = 'alpha'
+            const a = createActiveSession(ctx, ns, 'diff-team-a', { path: '/repo', host: 'h' })
+            const b = createActiveSession(ctx, ns, 'diff-team-b', { path: '/repo', host: 'h' })
+
+            const teamA = ctx.store.teams.createTeam('team-a', ns)
+            const teamB = ctx.store.teams.createTeam('team-b', ns)
+            ctx.store.teams.addMember(teamA.id, a.id, ns)
+            ctx.store.teams.addMember(teamB.id, b.id, ns)
+
+            const result = await ctx.engine.sendInterAgentMessage(a.id, b.id, 'hello', ns)
+            expect(result.status).toBe('error')
+            expect((result as { code: string }).code).toBe('not_authorized')
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('prefers acceptAllMessages over team check', async () => {
+        const ctx = createHarness()
+        try {
+            const ns = 'alpha'
+            const sender = createActiveSession(ctx, ns, 'sender', { path: '/repo', host: 'h' })
+            const target = createActiveSession(ctx, ns, 'target', { path: '/repo', host: 'h' })
+
+            // No team, no parent-child, but acceptAllMessages is set
+            setAcceptAllMessages(ctx.store, target.id, true)
+
+            const result = await ctx.engine.sendInterAgentMessage(sender.id, target.id, 'hello', ns)
+            expect(result.status).toBe('delivered')
         } finally {
             ctx.stop()
         }
