@@ -728,7 +728,7 @@ export class ApiSessionClient extends EventEmitter {
     keepAlive(
         thinking: boolean,
         mode: 'local' | 'remote',
-        runtime?: { permissionMode?: SessionPermissionMode; modelMode?: SessionModelMode },
+        runtime?: { permissionMode?: SessionPermissionMode; modelMode?: SessionModelMode; thinkingActivity?: import('@hapi/protocol/types').ThinkingActivity | null },
         options?: { volatile?: boolean }
     ): void {
         this._lastThinking = thinking

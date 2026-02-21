@@ -153,6 +153,102 @@ describe('SessionCache thinking state', () => {
     })
 })
 
+describe('SessionCache thinkingActivity', () => {
+    it('broadcasts thinkingActivity changes', () => {
+        const { cache, events } = createTestCache()
+        const now = Date.now()
+
+        cache.handleSessionAlive({ sid: 's1', time: now, thinking: true, thinkingActivity: 'compacting' })
+
+        const event = events.find(
+            e => e.type === 'session-updated' && e.sessionId === 's1'
+        )
+        expect(event).toBeDefined()
+        expect((event as any).data.thinkingActivity).toBe('compacting')
+    })
+
+    it('only broadcasts on thinkingActivity change', () => {
+        const { cache, events } = createTestCache()
+        const now = Date.now()
+
+        // First: set activity
+        cache.handleSessionAlive({ sid: 's1', time: now, thinking: true, thinkingActivity: 'compacting' })
+        events.length = 0
+
+        // Second: same activity — should NOT broadcast (within 10s window)
+        cache.handleSessionAlive({ sid: 's1', time: now + 1000, thinking: true, thinkingActivity: 'compacting' })
+
+        const broadcastEvents = events.filter(
+            e => e.type === 'session-updated' && e.sessionId === 's1'
+        )
+        expect(broadcastEvents).toHaveLength(0)
+    })
+
+    it('broadcasts when thinkingActivity changes to null', () => {
+        const { cache, events } = createTestCache()
+        const now = Date.now()
+
+        cache.handleSessionAlive({ sid: 's1', time: now, thinking: true, thinkingActivity: 'compacting' })
+        events.length = 0
+
+        cache.handleSessionAlive({ sid: 's1', time: now + 1000, thinking: true, thinkingActivity: null })
+
+        const event = events.find(
+            e => e.type === 'session-updated' && e.sessionId === 's1'
+        )
+        expect(event).toBeDefined()
+        expect((event as any).data.thinkingActivity).toBeNull()
+    })
+
+    it('clears thinkingActivity when thinking stops', () => {
+        const { cache, events } = createTestCache()
+        const now = Date.now()
+
+        cache.handleSessionAlive({ sid: 's1', time: now, thinking: true, thinkingActivity: 'compacting' })
+        events.length = 0
+
+        cache.handleSessionAlive({ sid: 's1', time: now + 1000, thinking: false })
+
+        const event = events.find(
+            e => e.type === 'session-updated' && e.sessionId === 's1'
+        )
+        expect(event).toBeDefined()
+        expect((event as any).data.thinkingActivity).toBeNull()
+    })
+
+    it('clears thinkingActivity on session end', () => {
+        const { cache, events } = createTestCache()
+        const now = Date.now()
+
+        cache.handleSessionAlive({ sid: 's1', time: now, thinking: true, thinkingActivity: 'compacting' })
+        events.length = 0
+
+        cache.handleSessionEnd({ sid: 's1', time: now + 1000 })
+
+        const endEvent = events.find(
+            e => e.type === 'session-updated' && e.sessionId === 's1'
+        )
+        expect(endEvent).toBeDefined()
+        expect((endEvent as any).data.thinkingActivity).toBeNull()
+    })
+
+    it('clears thinkingActivity on expiry', () => {
+        const { cache, events } = createTestCache()
+        const now = Date.now()
+
+        cache.handleSessionAlive({ sid: 's1', time: now, thinking: true, thinkingActivity: 'compacting' })
+        events.length = 0
+
+        cache.expireInactive(now + 31_000)
+
+        const expireEvent = events.find(
+            e => e.type === 'session-updated' && e.sessionId === 's1'
+        )
+        expect(expireEvent).toBeDefined()
+        expect((expireEvent as any).data.thinkingActivity).toBeNull()
+    })
+})
+
 describe('SessionCache clearInactiveSessions', () => {
     function createPersistentCache() {
         const store = new Store(':memory:')

@@ -124,6 +124,10 @@ export const DecryptedMessageSchema = z.object({
 
 export type DecryptedMessage = z.infer<typeof DecryptedMessageSchema>
 
+export const THINKING_ACTIVITIES = ['compacting'] as const
+export const ThinkingActivitySchema = z.enum(THINKING_ACTIVITIES)
+export type ThinkingActivity = z.infer<typeof ThinkingActivitySchema>
+
 export const SessionSchema = z.object({
     id: z.string(),
     namespace: z.string(),
@@ -139,6 +143,7 @@ export const SessionSchema = z.object({
     sortOrder: z.string().nullable(),
     thinking: z.boolean(),
     thinkingAt: z.number(),
+    thinkingActivity: ThinkingActivitySchema.nullable().optional(),
     todos: TodosSchema.optional(),
     permissionMode: PermissionModeSchema.optional(),
     modelMode: ModelModeSchema.optional(),

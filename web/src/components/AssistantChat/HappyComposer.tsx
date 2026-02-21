@@ -1,4 +1,5 @@
 import { getPermissionModeOptionsForFlavor, MODEL_MODE_LABELS, MODEL_MODES } from '@hapi/protocol'
+import type { ThinkingActivity } from '@hapi/protocol'
 import { ComposerPrimitive, useAssistantApi, useAssistantState } from '@assistant-ui/react'
 import {
     type ChangeEvent as ReactChangeEvent,
@@ -53,6 +54,7 @@ export function HappyComposer(props: {
     active?: boolean
     allowSendWhenInactive?: boolean
     thinking?: boolean
+    thinkingActivity?: ThinkingActivity | null
     agentState?: AgentState | null
     contextSize?: number
     controlledByUser?: boolean
@@ -730,6 +732,7 @@ export function HappyComposer(props: {
                     <StatusBar
                         active={active}
                         thinking={thinking}
+                        thinkingActivity={props.thinkingActivity}
                         agentState={agentState}
                         contextSize={contextSize}
                         modelMode={modelMode}

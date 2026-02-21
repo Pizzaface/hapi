@@ -1,10 +1,14 @@
 import { getPermissionModeLabel, getPermissionModeTone, isPermissionModeAllowedForFlavor } from '@hapi/protocol'
-import type { PermissionModeTone } from '@hapi/protocol'
+import type { PermissionModeTone, ThinkingActivity } from '@hapi/protocol'
 import { useMemo } from 'react'
 import type { AgentState, ModelMode, PermissionMode } from '@/types/api'
 import type { ConversationStatus } from '@/realtime/types'
 import { getContextBudgetTokens } from '@/chat/modelConfig'
 import { useTranslation } from '@/lib/use-translation'
+
+const THINKING_ACTIVITY_LABELS: Record<ThinkingActivity, string> = {
+    compacting: 'Compacting context...'
+}
 
 // Vibing messages for thinking state
 const VIBING_MESSAGES = [
@@ -113,6 +117,7 @@ function getContextWarning(contextSize: number, maxContextSize: number, t: (key:
 export function StatusBar(props: {
     active: boolean
     thinking: boolean
+    thinkingActivity?: ThinkingActivity | null
     agentState: AgentState | null | undefined
     contextSize?: number
     modelMode?: ModelMode
@@ -125,6 +130,10 @@ export function StatusBar(props: {
         () => getConnectionStatus(props.active, props.thinking, props.agentState, props.voiceStatus, t),
         [props.active, props.thinking, props.agentState, props.voiceStatus, t]
     )
+
+    const subtitle = props.thinking && props.thinkingActivity
+        ? THINKING_ACTIVITY_LABELS[props.thinkingActivity] ?? null
+        : null
 
     const contextWarning = useMemo(
         () => {
@@ -154,9 +163,16 @@ export function StatusBar(props: {
                     <span
                         className={`h-2 w-2 rounded-full ${connectionStatus.dotColor} ${connectionStatus.isPulsing ? 'animate-pulse' : ''}`}
                     />
-                    <span className={`text-xs ${connectionStatus.color}`}>
-                        {connectionStatus.text}
-                    </span>
+                    <div className="flex flex-col">
+                        <span className={`text-xs ${connectionStatus.color}`}>
+                            {connectionStatus.text}
+                        </span>
+                        {subtitle ? (
+                            <span className="text-[10px] leading-tight text-[var(--app-hint)]" data-testid="thinking-subtitle">
+                                {subtitle}
+                            </span>
+                        ) : null}
+                    </div>
                 </div>
                 {contextWarning ? (
                     <span className={`text-[10px] ${contextWarning.color}`}>

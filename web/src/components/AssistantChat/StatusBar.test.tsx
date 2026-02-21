@@ -92,4 +92,38 @@ describe('StatusBar', () => {
         })
         expect(view.getByText('offline')).toBeInTheDocument()
     })
+
+    it('shows subtitle when thinking with thinkingActivity', () => {
+        const { container } = renderStatusBar({
+            active: true,
+            thinking: true,
+            thinkingActivity: 'compacting',
+            agentState: null,
+        })
+        const subtitle = container.querySelector('[data-testid="thinking-subtitle"]')
+        expect(subtitle).toBeInTheDocument()
+        expect(subtitle?.textContent).toBe('Compacting context...')
+    })
+
+    it('hides subtitle when thinkingActivity is null', () => {
+        const { container } = renderStatusBar({
+            active: true,
+            thinking: true,
+            thinkingActivity: null,
+            agentState: null,
+        })
+        const subtitle = container.querySelector('[data-testid="thinking-subtitle"]')
+        expect(subtitle).toBeNull()
+    })
+
+    it('hides subtitle when not thinking even if thinkingActivity is set', () => {
+        const { container } = renderStatusBar({
+            active: true,
+            thinking: false,
+            thinkingActivity: 'compacting',
+            agentState: null,
+        })
+        const subtitle = container.querySelector('[data-testid="thinking-subtitle"]')
+        expect(subtitle).toBeNull()
+    })
 })

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { ModelMode, PermissionMode } from './modes'
+import type { ThinkingActivity } from './schemas'
 
 export type SocketErrorReason = 'namespace-missing' | 'access-denied' | 'not-found'
 
@@ -137,6 +138,7 @@ export interface ClientToServerEvents {
         sid: string
         time: number
         thinking: boolean
+        thinkingActivity?: ThinkingActivity | null
         mode?: 'local' | 'remote'
         permissionMode?: PermissionMode
         modelMode?: ModelMode

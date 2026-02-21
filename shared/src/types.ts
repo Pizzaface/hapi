@@ -7,6 +7,7 @@ export type {
     Metadata,
     Session,
     SyncEvent,
+    ThinkingActivity,
     TodoItem,
     WorktreeMetadata
 } from './schemas'

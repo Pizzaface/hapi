@@ -1,6 +1,6 @@
 import { ApiClient, ApiSessionClient } from '@/lib';
 import { MessageQueue2 } from '@/utils/MessageQueue2';
-import type { Metadata, SessionModelMode, SessionPermissionMode } from '@/api/types';
+import type { Metadata, SessionModelMode, SessionPermissionMode, ThinkingActivity } from '@/api/types';
 import { logger } from '@/ui/logger';
 
 export type AgentSessionBaseOptions<Mode> = {
@@ -30,6 +30,7 @@ export class AgentSessionBase<Mode> {
     sessionId: string | null;
     mode: 'local' | 'remote' = 'local';
     thinking: boolean = false;
+    thinkingActivity: ThinkingActivity | null = null;
 
     private sessionFoundCallbacks: ((sessionId: string) => void)[] = [];
     private readonly applySessionIdToMetadata: (metadata: Metadata, sessionId: string) => Metadata;
@@ -63,7 +64,22 @@ export class AgentSessionBase<Mode> {
 
     onThinkingChange = (thinking: boolean) => {
         this.thinking = thinking;
+        if (!thinking) {
+            this.thinkingActivity = null;
+        }
         this.client.keepAlive(thinking, this.mode, this.getKeepAliveRuntime(), { volatile: false });
+    };
+
+    onThinkingActivityChange = (activity: ThinkingActivity | null) => {
+        this.thinkingActivity = activity;
+        // Always include thinkingActivity explicitly — getKeepAliveRuntime() may
+        // omit it when null (payload optimization), but we need the hub to receive
+        // the null to clear a previously-set activity while still thinking.
+        this.client.keepAlive(this.thinking, this.mode, {
+            permissionMode: this.permissionMode,
+            modelMode: this.modelMode,
+            thinkingActivity: activity
+        }, { volatile: false });
     };
 
     onModeChange = (mode: 'local' | 'remote') => {
@@ -103,13 +119,14 @@ export class AgentSessionBase<Mode> {
         }
     };
 
-    protected getKeepAliveRuntime(): { permissionMode?: SessionPermissionMode; modelMode?: SessionModelMode } | undefined {
-        if (this.permissionMode === undefined && this.modelMode === undefined) {
+    protected getKeepAliveRuntime(): { permissionMode?: SessionPermissionMode; modelMode?: SessionModelMode; thinkingActivity?: ThinkingActivity | null } | undefined {
+        if (this.permissionMode === undefined && this.modelMode === undefined && this.thinkingActivity === null) {
             return undefined;
         }
         return {
             permissionMode: this.permissionMode,
-            modelMode: this.modelMode
+            modelMode: this.modelMode,
+            thinkingActivity: this.thinkingActivity
         };
     }
 
