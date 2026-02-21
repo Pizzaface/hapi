@@ -15,6 +15,8 @@ type UnreadTracker = {
     unreadSessionIds: Set<string>
     /** Previous updatedAt per session */
     prevUpdatedAt: Map<string, number>
+    /** Previous active state per session */
+    prevActive: Map<string, boolean>
 }
 
 function createTracker(): UnreadTracker {
@@ -22,6 +24,7 @@ function createTracker(): UnreadTracker {
         selectedSessionId: null,
         unreadSessionIds: new Set(),
         prevUpdatedAt: new Map(),
+        prevActive: new Map(),
     }
 }
 
@@ -30,21 +33,32 @@ function createTracker(): UnreadTracker {
 /** Simulates session list update with new updatedAt timestamps */
 function onSessionsUpdate(
     tracker: UnreadTracker,
-    sessions: Array<{ id: string; updatedAt: number }>
+    sessions: Array<{ id: string; updatedAt: number; active?: boolean }>
 ) {
     const nextUpdatedAt = new Map<string, number>()
+    const nextActive = new Map<string, boolean>()
 
     for (const s of sessions) {
+        const active = s.active ?? true
         nextUpdatedAt.set(s.id, s.updatedAt)
-        const prevTs = tracker.prevUpdatedAt.get(s.id)
+        nextActive.set(s.id, active)
 
-        // updatedAt increased and session is not currently selected: mark unread
-        if (prevTs !== undefined && s.updatedAt > prevTs && s.id !== tracker.selectedSessionId) {
+        if (s.id === tracker.selectedSessionId) continue
+
+        const prevTs = tracker.prevUpdatedAt.get(s.id)
+        const wasActive = tracker.prevActive.get(s.id)
+
+        const updatedAtBumped = prevTs !== undefined && s.updatedAt > prevTs
+        // Agent finished: was active, now inactive
+        const becameInactive = wasActive === true && !active
+
+        if (updatedAtBumped || becameInactive) {
             tracker.unreadSessionIds.add(s.id)
         }
     }
 
     tracker.prevUpdatedAt = nextUpdatedAt
+    tracker.prevActive = nextActive
 }
 
 /** Simulates user selecting a session in the list */
@@ -163,6 +177,59 @@ describe('Unread state lifecycle - SessionList', () => {
         onSessionsUpdate(t, [
             { id: 's1', updatedAt: 200 },
             { id: 's2', updatedAt: 200 },
+        ])
+        expect(t.unreadSessionIds.has('s1')).toBe(false)
+        expect(t.unreadSessionIds.has('s2')).toBe(true)
+    })
+
+    it('marks session as unread when agent finishes (active→inactive) even without updatedAt change', () => {
+        const t = createTracker()
+
+        // Session starts active
+        onSessionsUpdate(t, [{ id: 's1', updatedAt: 100, active: true }])
+        expect(t.unreadSessionIds.has('s1')).toBe(false)
+
+        // Agent finishes — active flips to false but updatedAt stays the same
+        onSessionsUpdate(t, [{ id: 's1', updatedAt: 100, active: false }])
+        expect(t.unreadSessionIds.has('s1')).toBe(true)
+    })
+
+    it('does not mark unread when active session finishes while selected', () => {
+        const t = createTracker()
+
+        onSelectSession(t, 's1')
+        onSessionsUpdate(t, [{ id: 's1', updatedAt: 100, active: true }])
+
+        // Agent finishes while user is viewing the session
+        onSessionsUpdate(t, [{ id: 's1', updatedAt: 100, active: false }])
+        expect(t.unreadSessionIds.has('s1')).toBe(false)
+    })
+
+    it('does not re-trigger unread for sessions that are already inactive', () => {
+        const t = createTracker()
+
+        // Session is already inactive
+        onSessionsUpdate(t, [{ id: 's1', updatedAt: 100, active: false }])
+        expect(t.unreadSessionIds.has('s1')).toBe(false)
+
+        // Still inactive on next poll — no spurious unread
+        onSessionsUpdate(t, [{ id: 's1', updatedAt: 100, active: false }])
+        expect(t.unreadSessionIds.has('s1')).toBe(false)
+    })
+
+    it('marks unread when background agent finishes while viewing another session', () => {
+        const t = createTracker()
+
+        onSelectSession(t, 's1')
+        onSessionsUpdate(t, [
+            { id: 's1', updatedAt: 100, active: true },
+            { id: 's2', updatedAt: 100, active: true },
+        ])
+
+        // s2 agent finishes while user is viewing s1
+        onSessionsUpdate(t, [
+            { id: 's1', updatedAt: 100, active: true },
+            { id: 's2', updatedAt: 100, active: false },
         ])
         expect(t.unreadSessionIds.has('s1')).toBe(false)
         expect(t.unreadSessionIds.has('s2')).toBe(true)

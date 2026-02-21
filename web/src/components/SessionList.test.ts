@@ -212,7 +212,7 @@ describe('SessionList helpers', () => {
 
     it('uses subdued unread style while thinking', () => {
         expect(getUnreadLabelClass(true)).toContain('opacity-70')
-        expect(getUnreadLabelClass(false)).toBe('text-[#34C759]')
+        expect(getUnreadLabelClass(false)).toBe('text-[var(--app-badge-warning-text)]')
     })
 
     it('computes clear-inactive counts by age buckets', () => {

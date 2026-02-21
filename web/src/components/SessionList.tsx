@@ -707,7 +707,7 @@ function formatRelativeTime(value: number, t: (key: string, params?: Record<stri
 export function getUnreadLabelClass(thinking: boolean): string {
     return thinking
         ? 'text-[var(--app-hint)] opacity-70'
-        : 'text-[#34C759]'
+        : 'text-[var(--app-badge-warning-text)]'
 }
 
 function SessionItem(props: {
@@ -919,9 +919,8 @@ function SessionItem(props: {
                     <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-0.5 bg-[var(--app-link)]" />
                 ) : null}
                 <div
-                    className={`session-list-item relative z-10 flex w-full select-none border-r-2 ${highlighted ? 'bg-[var(--app-secondary-bg)] border-l-2 border-l-[var(--app-link)]' : 'bg-[var(--app-bg)]'} ${dragging ? 'opacity-95 ring-2 ring-[var(--app-link)] shadow-[0_4px_12px_rgba(0,0,0,0.15)]' : ''}`}
+                    className={`session-list-item relative z-10 flex w-full select-none ${highlighted ? 'bg-[var(--app-secondary-bg)] border-l-2 border-l-[var(--app-link)]' : 'bg-[var(--app-bg)]'} ${dragging ? 'opacity-95 ring-2 ring-[var(--app-link)] shadow-[0_4px_12px_rgba(0,0,0,0.15)]' : ''}`}
                     style={{
-                        borderRightColor: `var(${providerDisplay.colorVar})`,
                         WebkitTouchCallout: 'none',
                         transform: showSwipeUi && swipeOffset !== 0 ? `translateX(${swipeOffset}px)` : undefined,
                         transition: showSwipeUi ? (isSwiping ? 'none' : 'transform 150ms ease-out') : undefined
@@ -934,7 +933,8 @@ function SessionItem(props: {
                         {...dragHandleBindings.listeners}
                         disabled={!dndEnabled}
                         data-drag-handle={s.id}
-                        className={`inline-flex w-11 shrink-0 self-stretch items-center justify-center border-r border-[var(--app-divider)] text-[var(--app-hint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] ${dndEnabled ? 'cursor-grab active:cursor-grabbing hover:text-[var(--app-fg)]' : 'cursor-not-allowed opacity-50'}`}
+                        className={`inline-flex w-11 shrink-0 self-stretch items-center justify-center border-r text-[var(--app-hint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] ${dndEnabled ? 'cursor-grab active:cursor-grabbing hover:text-[var(--app-fg)]' : 'cursor-not-allowed opacity-50'}`}
+                        style={{ borderColor: `var(${providerDisplay.colorVar})` }}
                         aria-label={dndEnabled
                             ? t('session.dragHandle.label', { name: sessionName })
                             : t('session.dragHandle.disabled')}
@@ -1152,6 +1152,7 @@ export function SessionList(props: {
     const [readHistory, setReadHistory] = useState<SessionReadHistory>(() => loadSessionReadHistory())
 
     const prevUpdatedAtRef = useRef<Map<string, number>>(new Map())
+    const prevActiveRef = useRef<Map<string, boolean>>(new Map())
     const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => new Set())
 
     useEffect(() => {
@@ -1181,18 +1182,26 @@ export function SessionList(props: {
 
     useEffect(() => {
         const prevUpdatedAt = prevUpdatedAtRef.current
+        const prevActive = prevActiveRef.current
         const nextUpdatedAt = new Map<string, number>()
+        const nextActive = new Map<string, boolean>()
 
         setUnreadSessionIds(prev => {
             let next = prev
             for (const session of props.sessions) {
                 nextUpdatedAt.set(session.id, session.updatedAt)
+                nextActive.set(session.id, session.active)
+                if (session.id === selectedSessionId) continue
+
                 const previousUpdatedAt = prevUpdatedAt.get(session.id)
-                if (
-                    previousUpdatedAt !== undefined
+                const wasActive = prevActive.get(session.id)
+
+                const updatedAtBumped = previousUpdatedAt !== undefined
                     && session.updatedAt > previousUpdatedAt
-                    && session.id !== selectedSessionId
-                ) {
+                // Agent finished: was active, now inactive
+                const becameInactive = wasActive === true && !session.active
+
+                if (updatedAtBumped || becameInactive) {
                     if (!next.has(session.id)) {
                         next = new Set(next)
                         next.add(session.id)
@@ -1203,6 +1212,7 @@ export function SessionList(props: {
         })
 
         prevUpdatedAtRef.current = nextUpdatedAt
+        prevActiveRef.current = nextActive
     }, [props.sessions, selectedSessionId])
 
     useEffect(() => {
@@ -1642,7 +1652,7 @@ export function SessionList(props: {
                                                 </span>
                                             ) : null}
                                             {groupUnreadCount > 0 ? (
-                                                <span className="shrink-0 text-xs text-[#34C759]">
+                                                <span className="shrink-0 text-xs text-[var(--app-badge-warning-text)]">
                                                     {groupUnreadCount} {t('session.item.unread')}
                                                 </span>
                                             ) : null}
