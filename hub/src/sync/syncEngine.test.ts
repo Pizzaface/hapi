@@ -763,3 +763,177 @@ describe('SyncEngine.sendInterAgentMessage auth cascade', () => {
         }
     })
 })
+
+describe('SyncEngine TTL cleanup', () => {
+    it('updates team lastActiveMemberAt on handleSessionAlive', () => {
+        const ctx = createHarness()
+
+        try {
+            const namespace = 'alpha'
+            const session = ctx.engine.getOrCreateSession('ttl-alive', { path: '/tmp', host: 'h' }, null, namespace)
+            const team = ctx.store.teams.createTeam('temp-team', namespace, { ttlSeconds: 3600 })
+            ctx.store.teams.addMember(team.id, session.id, namespace)
+
+            const before = ctx.store.teams.getTeam(team.id, namespace)
+            expect(before?.lastActiveMemberAt).toBeNull()
+
+            ctx.engine.handleSessionAlive({ sid: session.id, time: Date.now() })
+
+            const after = ctx.store.teams.getTeam(team.id, namespace)
+            expect(after?.lastActiveMemberAt).toBeNumber()
+            expect(after!.lastActiveMemberAt!).toBeGreaterThan(0)
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('deletes expired temp team on disconnect when no active members remain', () => {
+        const ctx = createHarness()
+
+        try {
+            const namespace = 'alpha'
+            const session = ctx.engine.getOrCreateSession('ttl-disconnect', { path: '/tmp', host: 'h' }, null, namespace)
+            const team = ctx.store.teams.createTeam('expired-team', namespace, { ttlSeconds: 1 })
+            ctx.store.teams.addMember(team.id, session.id, namespace)
+
+            // Make session active first (this updates lastActiveMemberAt via updateTeamActivity)
+            ctx.engine.handleSessionAlive({ sid: session.id, time: Date.now() })
+
+            // Now overwrite lastActiveMemberAt to well in the past (simulating expired TTL)
+            ctx.store.teams.updateLastActiveMemberAt(team.id, Date.now() - 60_000)
+
+            // End session — team should be deleted (expired + no active members)
+            ctx.engine.handleSessionEnd({ sid: session.id, time: Date.now() })
+
+            const deleted = ctx.store.teams.getTeam(team.id, namespace)
+            expect(deleted).toBeNull()
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('preserves temp team on disconnect when active members remain', () => {
+        const ctx = createHarness()
+
+        try {
+            const namespace = 'alpha'
+            const sessionA = ctx.engine.getOrCreateSession('ttl-keep-a', { path: '/tmp', host: 'h' }, null, namespace)
+            const sessionB = ctx.engine.getOrCreateSession('ttl-keep-b', { path: '/tmp', host: 'h' }, null, namespace)
+            const team = ctx.store.teams.createTeam('active-team', namespace, { ttlSeconds: 1 })
+            ctx.store.teams.addMember(team.id, sessionA.id, namespace)
+            ctx.store.teams.addMember(team.id, sessionB.id, namespace)
+
+            // Set lastActiveMemberAt to well in the past
+            ctx.store.teams.updateLastActiveMemberAt(team.id, Date.now() - 60_000)
+
+            // Both sessions active
+            ctx.engine.handleSessionAlive({ sid: sessionA.id, time: Date.now() })
+            ctx.engine.handleSessionAlive({ sid: sessionB.id, time: Date.now() })
+
+            // Only sessionA disconnects — sessionB is still active
+            ctx.engine.handleSessionEnd({ sid: sessionA.id, time: Date.now() })
+
+            // Team should still exist
+            const preserved = ctx.store.teams.getTeam(team.id, namespace)
+            expect(preserved).not.toBeNull()
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('never auto-deletes persistent teams on disconnect', () => {
+        const ctx = createHarness()
+
+        try {
+            const namespace = 'alpha'
+            const session = ctx.engine.getOrCreateSession('ttl-persistent', { path: '/tmp', host: 'h' }, null, namespace)
+            const team = ctx.store.teams.createTeam('persistent-team', namespace, { persistent: true, ttlSeconds: 1 })
+            ctx.store.teams.addMember(team.id, session.id, namespace)
+
+            // Set lastActiveMemberAt far in the past
+            ctx.store.teams.updateLastActiveMemberAt(team.id, Date.now() - 60_000)
+
+            ctx.engine.handleSessionAlive({ sid: session.id, time: Date.now() })
+            ctx.engine.handleSessionEnd({ sid: session.id, time: Date.now() })
+
+            // Persistent team should NOT be deleted
+            const preserved = ctx.store.teams.getTeam(team.id, namespace)
+            expect(preserved).not.toBeNull()
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('sweep deletes expired temp teams', () => {
+        const ctx = createHarness()
+
+        try {
+            const namespace = 'alpha'
+            const team = ctx.store.teams.createTeam('sweep-target', namespace, { ttlSeconds: 1 })
+
+            // Set lastActiveMemberAt far in the past
+            ctx.store.teams.updateLastActiveMemberAt(team.id, Date.now() - 60_000)
+
+            // Trigger sweep via the private method
+            ;(ctx.engine as unknown as { sweepExpiredTeams: () => void }).sweepExpiredTeams()
+
+            const deleted = ctx.store.teams.getTeam(team.id, namespace)
+            expect(deleted).toBeNull()
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('sweep preserves persistent teams', () => {
+        const ctx = createHarness()
+
+        try {
+            const namespace = 'alpha'
+            const team = ctx.store.teams.createTeam('sweep-persistent', namespace, { persistent: true, ttlSeconds: 1 })
+
+            // Set lastActiveMemberAt far in the past
+            ctx.store.teams.updateLastActiveMemberAt(team.id, Date.now() - 60_000)
+
+            ;(ctx.engine as unknown as { sweepExpiredTeams: () => void }).sweepExpiredTeams()
+
+            const preserved = ctx.store.teams.getTeam(team.id, namespace)
+            expect(preserved).not.toBeNull()
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('sweep preserves non-expired temp teams', () => {
+        const ctx = createHarness()
+
+        try {
+            const namespace = 'alpha'
+            const team = ctx.store.teams.createTeam('sweep-fresh', namespace, { ttlSeconds: 3600 })
+
+            // Set lastActiveMemberAt to now (not expired)
+            ctx.store.teams.updateLastActiveMemberAt(team.id, Date.now())
+
+            ;(ctx.engine as unknown as { sweepExpiredTeams: () => void }).sweepExpiredTeams()
+
+            const preserved = ctx.store.teams.getTeam(team.id, namespace)
+            expect(preserved).not.toBeNull()
+        } finally {
+            ctx.stop()
+        }
+    })
+
+    it('does not update team activity for sessions without a team', () => {
+        const ctx = createHarness()
+
+        try {
+            const namespace = 'alpha'
+            const session = ctx.engine.getOrCreateSession('no-team', { path: '/tmp', host: 'h' }, null, namespace)
+
+            // Should not throw
+            ctx.engine.handleSessionAlive({ sid: session.id, time: Date.now() })
+            ctx.engine.handleSessionEnd({ sid: session.id, time: Date.now() })
+        } finally {
+            ctx.stop()
+        }
+    })
+})

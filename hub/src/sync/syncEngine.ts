@@ -90,6 +90,7 @@ export class SyncEngine {
     private readonly beadGateway: BeadGateway
     private readonly beadService: BeadService
     private inactivityTimer: NodeJS.Timeout | null = null
+    private teamSweepTimer: NodeJS.Timeout | null = null
 
     constructor(
         store: Store,
@@ -113,12 +114,17 @@ export class SyncEngine {
         })
         this.reloadAll()
         this.inactivityTimer = setInterval(() => this.expireInactive(), 5_000)
+        this.teamSweepTimer = setInterval(() => this.sweepExpiredTeams(), 300_000)
     }
 
     stop(): void {
         if (this.inactivityTimer) {
             clearInterval(this.inactivityTimer)
             this.inactivityTimer = null
+        }
+        if (this.teamSweepTimer) {
+            clearInterval(this.teamSweepTimer)
+            this.teamSweepTimer = null
         }
         this.beadService.stop()
     }
@@ -249,10 +255,12 @@ export class SyncEngine {
         modelMode?: ModelMode
     }): void {
         this.sessionCache.handleSessionAlive(payload)
+        this.updateTeamActivity(payload.sid)
     }
 
     handleSessionEnd(payload: { sid: string; time: number }): void {
         this.sessionCache.handleSessionEnd(payload)
+        this.checkTeamCleanupOnDisconnect(payload.sid)
     }
 
     handleBeadLinked(payload: { sid: string; beadId: string }): void {
@@ -266,6 +274,52 @@ export class SyncEngine {
     private expireInactive(): void {
         this.sessionCache.expireInactive()
         this.machineCache.expireInactive()
+    }
+
+    private updateTeamActivity(sessionId: string): void {
+        const session = this.sessionCache.getSession(sessionId)
+        if (!session) return
+
+        const team = this.store.teams.getTeamForSession(sessionId, session.namespace)
+        if (!team) return
+
+        this.store.teams.updateLastActiveMemberAt(team.id, Date.now())
+    }
+
+    private checkTeamCleanupOnDisconnect(sessionId: string): void {
+        const session = this.sessionCache.getSession(sessionId)
+        if (!session) return
+
+        const team = this.store.teams.getTeamForSession(sessionId, session.namespace)
+        if (!team || team.persistent) return
+
+        // Check before updating — if the team is already expired and has no active members, delete it
+        const memberIds = this.store.teams.getTeamMembers(team.id, team.namespace)
+        const hasActiveMember = memberIds.some((memberId) => {
+            const memberSession = this.sessionCache.getSession(memberId)
+            return memberSession?.active === true
+        })
+
+        if (!hasActiveMember) {
+            const now = Date.now()
+            const lastActive = team.lastActiveMemberAt ?? team.createdAt
+            if ((now - lastActive) > team.ttlSeconds * 1000) {
+                console.log(`[SyncEngine] TTL cleanup: deleting expired temporary team "${team.name}" (${team.id})`)
+                this.store.teams.deleteTeam(team.id, team.namespace)
+                return
+            }
+        }
+
+        // Update lastActiveMemberAt so the sweep timer knows when this team was last active
+        this.store.teams.updateLastActiveMemberAt(team.id, Date.now())
+    }
+
+    private sweepExpiredTeams(): void {
+        const expiredTeams = this.store.teams.getExpiredTemporaryTeams(Date.now())
+        for (const team of expiredTeams) {
+            console.log(`[SyncEngine] TTL sweep: deleting expired temporary team "${team.name}" (${team.id})`)
+            this.store.teams.deleteTeam(team.id, team.namespace)
+        }
     }
 
     private reloadAll(): void {
