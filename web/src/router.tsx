@@ -352,7 +352,7 @@ function SessionsPage() {
                     className={`${isSessionsIndex ? 'hidden lg:flex' : 'flex'} min-w-0 flex-1 flex-col bg-[var(--app-bg)]`}
                     inert={drawer.isOpen || undefined}
                 >
-                    <div className="flex-1 min-h-0">
+                    <div className="flex flex-col flex-1 min-h-0">
                         <Outlet />
                     </div>
                 </div>
