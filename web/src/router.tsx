@@ -41,6 +41,8 @@ import SettingsPage from '@/routes/settings'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
 import { useSystemStats } from '@/hooks/queries/useSystemStats'
 import { useSidebarResize } from '@/hooks/useSidebarResize'
+import { useDrawerSwipe } from '@/hooks/useDrawerSwipe'
+import { DrawerContext } from '@/lib/drawer-context'
 import { SystemStatsBar } from '@/components/SystemStatsBar'
 import type { DecryptedMessage, SlashCommand } from '@/types/api'
 
@@ -161,6 +163,90 @@ function SettingsIcon(props: { className?: string }) {
     )
 }
 
+function SessionListPanel(props: {
+    sessions: ReturnType<typeof useSessions>['sessions']
+    selectedSessionId: string | null
+    isLoading: boolean
+    error: string | null
+    machineNames: Map<string, string>
+    systemStats: ReturnType<typeof useSystemStats>['stats']
+    view: ReturnType<typeof useSessionListView>['view']
+    toggleView: () => void
+    onRefresh: () => void
+    onSelect: (sessionId: string) => void
+    onNewSession: (opts?: { directory?: string; machineId?: string }) => void
+    scrollContainerRef: React.RefObject<HTMLDivElement | null>
+    api: ReturnType<typeof useAppContext>['api']
+}) {
+    const { t } = useTranslation()
+    const navigate = useNavigate()
+    const { sessions, selectedSessionId, isLoading, error, machineNames, systemStats, view, toggleView, onRefresh, onSelect, onNewSession, scrollContainerRef, api } = props
+
+    const projectCount = new Set(
+        sessions.map((session) => {
+            const directory = session.metadata?.worktree?.basePath ?? session.metadata?.path ?? 'Other'
+            const machineId = session.metadata?.machineId ?? 'unknown-machine'
+            return `${machineId}::${directory}`
+        })
+    ).size
+
+    return (
+        <>
+            <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
+                <div className="mx-auto w-full max-w-content flex items-center justify-between px-3 py-2">
+                    <div className="text-xs text-[var(--app-hint)]">
+                        {view === 'flat'
+                            ? t('sessions.countFlat', { n: sessions.length })
+                            : t('sessions.count', { n: sessions.length, m: projectCount })}
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => navigate({ to: '/settings' })}
+                            className="p-1.5 rounded-full text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)] transition-colors"
+                            title={t('settings.title')}
+                        >
+                            <SettingsIcon className="h-5 w-5" />
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => navigate({ to: '/sessions/new' })}
+                            className="session-list-new-button p-1.5 rounded-full text-[var(--app-link)] transition-colors"
+                            title={t('sessions.new')}
+                        >
+                            <PlusIcon className="h-5 w-5" />
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-y-auto desktop-scrollbar-left">
+                {error ? (
+                    <div className="mx-auto w-full max-w-content px-3 py-2">
+                        <div className="text-sm text-red-600">{error}</div>
+                    </div>
+                ) : null}
+                <SessionList
+                    sessions={sessions}
+                    selectedSessionId={selectedSessionId}
+                    scrollContainerRef={scrollContainerRef}
+                    machineNames={machineNames}
+                    onSelect={onSelect}
+                    onNewSession={onNewSession}
+                    onRefresh={onRefresh}
+                    isLoading={isLoading}
+                    renderHeader={false}
+                    api={api}
+                    view={view}
+                    onToggleView={toggleView}
+                />
+            </div>
+
+            <SystemStatsBar stats={systemStats} />
+        </>
+    )
+}
+
 function SessionsPage() {
     const { api } = useAppContext()
     const navigate = useNavigate()
@@ -189,96 +275,123 @@ function SessionsPage() {
         void refetch()
     }, [refetch])
 
-    const projectCount = new Set(
-        sessions.map((session) => {
-            const directory = session.metadata?.worktree?.basePath ?? session.metadata?.path ?? 'Other'
-            const machineId = session.metadata?.machineId ?? 'unknown-machine'
-            return `${machineId}::${directory}`
-        })
-    ).size
     const sessionMatch = matchRoute({ to: '/sessions/$sessionId', fuzzy: true })
     const selectedSessionId = sessionMatch && sessionMatch.sessionId !== 'new' ? sessionMatch.sessionId : null
     const isSessionsIndex = pathname === '/sessions' || pathname === '/sessions/'
 
+    // Mobile drawer: active when on a session detail page on mobile
+    // The CSS media query handles showing/hiding — the hook just needs to know
+    // whether to listen for touch events
+    const isMobileDrawerCandidate = !isSessionsIndex && selectedSessionId !== null
+    const drawer = useDrawerSwipe({ enabled: isMobileDrawerCandidate })
+
+    const handleSessionSelect = useCallback((sessionId: string) => {
+        // Same-session tap: just close drawer
+        if (sessionId === selectedSessionId) {
+            drawer.close()
+            return
+        }
+        drawer.close()
+        navigate({
+            to: '/sessions/$sessionId',
+            params: { sessionId },
+        })
+    }, [selectedSessionId, drawer, navigate])
+
+    const handleNewSession = useCallback((opts?: { directory?: string; machineId?: string }) => {
+        drawer.close()
+        navigate({
+            to: '/sessions/new',
+            search: opts ? {
+                ...(opts.directory ? { directory: opts.directory } : {}),
+                ...(opts.machineId ? { machineId: opts.machineId } : {}),
+            } : undefined
+        })
+    }, [drawer, navigate])
+
+    const drawerContextValue = useMemo(
+        () => ({ openDrawer: drawer.open }),
+        [drawer.open]
+    )
+
+    const listPanelProps = {
+        sessions,
+        selectedSessionId,
+        isLoading,
+        error,
+        machineNames,
+        systemStats,
+        view,
+        toggleView,
+        onRefresh: handleRefresh,
+        onSelect: handleSessionSelect,
+        onNewSession: handleNewSession,
+        scrollContainerRef,
+        api,
+    }
+
     return (
-        <div className="flex h-full min-h-0">
-            <div
-                className={`${isSessionsIndex ? 'flex' : 'hidden lg:flex'} w-full shrink-0 flex-col bg-[var(--app-bg)]`}
-                style={{ width: sidebarWidth, maxWidth: '100%' }}
-            >
-                <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
-                    <div className="mx-auto w-full max-w-content flex items-center justify-between px-3 py-2">
-                        <div className="text-xs text-[var(--app-hint)]">
-                            {view === 'flat'
-                                ? t('sessions.countFlat', { n: sessions.length })
-                                : t('sessions.count', { n: sessions.length, m: projectCount })}
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <button
-                                type="button"
-                                onClick={() => navigate({ to: '/settings' })}
-                                className="p-1.5 rounded-full text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)] transition-colors"
-                                title={t('settings.title')}
-                            >
-                                <SettingsIcon className="h-5 w-5" />
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => navigate({ to: '/sessions/new' })}
-                                className="session-list-new-button p-1.5 rounded-full text-[var(--app-link)] transition-colors"
-                                title={t('sessions.new')}
-                            >
-                                <PlusIcon className="h-5 w-5" />
-                            </button>
-                        </div>
+        <DrawerContext.Provider value={drawerContextValue}>
+            <div className="flex h-full min-h-0">
+                {/* Desktop sidebar — unchanged */}
+                <div
+                    className={`${isSessionsIndex ? 'flex' : 'hidden'} lg:flex w-full shrink-0 flex-col bg-[var(--app-bg)]`}
+                    style={{ width: sidebarWidth, maxWidth: '100%' }}
+                >
+                    <SessionListPanel {...listPanelProps} />
+                </div>
+
+                <div
+                    onPointerDown={handleResizeStart}
+                    className="hidden lg:flex w-1 shrink-0 cursor-col-resize items-center justify-center border-r border-[var(--app-divider)] bg-[var(--app-bg)] hover:bg-[var(--app-link)] hover:opacity-40 active:bg-[var(--app-link)] active:opacity-60 transition-colors"
+                    title="Drag to resize"
+                />
+
+                {/* Main content area */}
+                <div
+                    className={`${isSessionsIndex ? 'hidden lg:flex' : 'flex'} min-w-0 flex-1 flex-col bg-[var(--app-bg)]`}
+                    inert={drawer.isOpen || undefined}
+                >
+                    <div className="flex-1 min-h-0">
+                        <Outlet />
                     </div>
                 </div>
 
-                <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-y-auto desktop-scrollbar-left">
-                    {error ? (
-                        <div className="mx-auto w-full max-w-content px-3 py-2">
-                            <div className="text-sm text-red-600">{error}</div>
+                {/* Mobile drawer overlay — only rendered when on session detail, hidden on desktop via lg:hidden */}
+                {isMobileDrawerCandidate ? (
+                    <>
+                        {/* Backdrop */}
+                        <div
+                            ref={drawer.backdropRef}
+                            className="drawer-backdrop fixed inset-0 z-40 bg-black/50 lg:hidden"
+                            style={{
+                                opacity: 'var(--drawer-offset, 0)',
+                                pointerEvents: drawer.isOpen ? 'auto' : 'none',
+                                transition: drawer.isDragging ? 'none' : 'opacity 300ms cubic-bezier(0.32, 0.72, 0, 1)',
+                            }}
+                            onClick={() => drawer.close()}
+                            data-testid="drawer-backdrop"
+                        />
+                        {/* Drawer panel */}
+                        <div
+                            ref={drawer.containerRef}
+                            className="drawer-panel fixed inset-y-0 left-0 z-50 flex w-[min(85vw,420px)] flex-col bg-[var(--app-bg)] lg:hidden"
+                            style={{
+                                transform: 'translateX(calc((var(--drawer-offset, 0) - 1) * 100%))',
+                                transition: drawer.isDragging ? 'none' : 'transform 300ms cubic-bezier(0.32, 0.72, 0, 1)',
+                                willChange: 'transform',
+                            }}
+                            role="dialog"
+                            aria-modal={drawer.isOpen ? true : undefined}
+                            aria-label="Session list"
+                            data-testid="drawer-panel"
+                        >
+                            <SessionListPanel {...listPanelProps} />
                         </div>
-                    ) : null}
-                    <SessionList
-                        sessions={sessions}
-                        selectedSessionId={selectedSessionId}
-                        scrollContainerRef={scrollContainerRef}
-                        machineNames={machineNames}
-                        onSelect={(sessionId) => navigate({
-                            to: '/sessions/$sessionId',
-                            params: { sessionId },
-                        })}
-                        onNewSession={(opts) => navigate({
-                            to: '/sessions/new',
-                            search: opts ? {
-                                ...(opts.directory ? { directory: opts.directory } : {}),
-                                ...(opts.machineId ? { machineId: opts.machineId } : {}),
-                            } : undefined
-                        })}
-                        onRefresh={handleRefresh}
-                        isLoading={isLoading}
-                        renderHeader={false}
-                        api={api}
-                        view={view}
-                        onToggleView={toggleView}
-                    />
-                </div>
-
-                <SystemStatsBar stats={systemStats} />
+                    </>
+                ) : null}
             </div>
-
-            <div
-                onPointerDown={handleResizeStart}
-                className="hidden lg:flex w-1 shrink-0 cursor-col-resize items-center justify-center border-r border-[var(--app-divider)] bg-[var(--app-bg)] hover:bg-[var(--app-link)] hover:opacity-40 active:bg-[var(--app-link)] active:opacity-60 transition-colors"
-                title="Drag to resize"
-            />
-            <div className={`${isSessionsIndex ? 'hidden lg:flex' : 'flex'} min-w-0 flex-1 flex-col bg-[var(--app-bg)]`}>
-                <div className="flex-1 min-h-0">
-                    <Outlet />
-                </div>
-            </div>
-        </div>
+        </DrawerContext.Provider>
     )
 }
 
