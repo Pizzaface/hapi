@@ -19,6 +19,7 @@ import { getOrCreateJwtSecret } from './config/jwtSecret'
 import { createSocketServer } from './socket/server'
 import { SSEManager } from './sse/sseManager'
 import { getOrCreateVapidKeys } from './config/vapidKeys'
+import { getOrCreateRelayAuthKey } from './config/relayAuthKey'
 import { PushService } from './push/pushService'
 import { PushNotificationChannel } from './push/pushNotificationChannel'
 import { VisibilityTracker } from './visibility/visibilityTracker'
@@ -232,11 +233,12 @@ async function main() {
     // Initialize tunnel AFTER web service is ready
     let tunnelUrl: string | null = null
     if (relayFlag.enabled) {
+        const relayAuth = await getOrCreateRelayAuthKey(config.dataDir)
         tunnelManager = new TunnelManager({
             localPort: config.listenPort,
             enabled: true,
             apiDomain: relayApiDomain,
-            authKey: process.env.HAPI_RELAY_AUTH || null,
+            authKey: relayAuth.key,
             useRelay: process.env.HAPI_RELAY_FORCE_TCP === 'true' || process.env.HAPI_RELAY_FORCE_TCP === '1'
         })
 
