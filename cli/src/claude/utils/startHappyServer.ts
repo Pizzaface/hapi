@@ -25,6 +25,19 @@ type SpawnSessionInput = {
     initialPrompt?: string
 }
 
+// Exported for JSON Schema regression testing. Avoid TS instantiation depth issues by widening the type.
+export const spawnSessionInputSchema: z.ZodTypeAny = z.object({
+    directory: z.string().min(1).describe('Working directory for the new session (prefer absolute path)'),
+    machineId: z.string().optional().describe('Optional machine ID. Defaults to current session machine when available'),
+    agent: z.enum(['claude', 'codex', 'gemini', 'opencode']).optional().describe('Agent type for the new session: claude (default), codex (OpenAI Codex), gemini (Google Gemini), or opencode. Match to the user\'s requested agent.'),
+    model: z.string().optional().describe('Model override. Per agent: claude → opus/sonnet/haiku, codex → o3/o4-mini/gpt-4.1, gemini → gemini-2.5-pro/gemini-2.5-flash. Omit to use each agent\'s best model.'),
+    yolo: z.union([z.boolean(), z.literal('true').transform(() => true), z.literal('false').transform(() => false)]).optional().describe('Enable aggressive auto-approval mode for the spawned session'),
+    sessionType: z.enum(['simple', 'worktree']).optional().describe('Spawn a normal session or a Git worktree session'),
+    worktreeName: z.string().optional().describe('Optional worktree name hint (worktree sessions only)'),
+    worktreeBranch: z.string().optional().describe('Optional worktree branch name (worktree sessions only)'),
+    initialPrompt: z.string().max(100_000).optional().describe('Optional initial prompt/task to send after spawn (max 100000 chars)'),
+});
+
 export async function startHappyServer(client: ApiSessionClient) {
     // Handler that sends title updates via the client
     const handler = async (title: string) => {
@@ -122,19 +135,6 @@ export async function startHappyServer(client: ApiSessionClient) {
     // Avoid TS instantiation depth issues by widening the schema type.
     const changeTitleInputSchema: z.ZodTypeAny = z.object({
         title: z.string().describe('The new title for the chat session'),
-    });
-
-    // Avoid TS instantiation depth issues by widening the schema type.
-    const spawnSessionInputSchema: z.ZodTypeAny = z.object({
-        directory: z.string().min(1).describe('Working directory for the new session (prefer absolute path)'),
-        machineId: z.string().optional().describe('Optional machine ID. Defaults to current session machine when available'),
-        agent: z.enum(['claude', 'codex', 'gemini', 'opencode']).optional().describe('Agent type for the new session: claude (default), codex (OpenAI Codex), gemini (Google Gemini), or opencode. Match to the user\'s requested agent.'),
-        model: z.string().optional().describe('Model override. Per agent: claude → opus/sonnet/haiku, codex → o3/o4-mini/gpt-4.1, gemini → gemini-2.5-pro/gemini-2.5-flash. Omit to use each agent\'s best model.'),
-        yolo: z.union([z.boolean(), z.literal('true').transform(() => true), z.literal('false').transform(() => false)]).optional().describe('Enable aggressive auto-approval mode for the spawned session'),
-        sessionType: z.enum(['simple', 'worktree']).optional().describe('Spawn a normal session or a Git worktree session'),
-        worktreeName: z.string().optional().describe('Optional worktree name hint (worktree sessions only)'),
-        worktreeBranch: z.string().optional().describe('Optional worktree branch name (worktree sessions only)'),
-        initialPrompt: z.string().max(100_000).optional().describe('Optional initial prompt/task to send after spawn (max 100000 chars)'),
     });
 
     mcp.registerTool<any, any>('change_title', {
