@@ -550,19 +550,22 @@ export class SyncEngine {
                 if (joined) {
                     return
                 }
-                console.warn(`[SyncEngine] Team join returned false for session ${sessionId} → team ${teamId}`)
             } catch (error) {
-                if (n < MAX_ATTEMPTS) {
-                    console.warn(
-                        `[SyncEngine] Team join attempt ${n}/${MAX_ATTEMPTS} failed for session ${sessionId} → team ${teamId}: ${error instanceof Error ? error.message : String(error)}. Retrying in ${DELAY_MS}ms…`
-                    )
-                    setTimeout(() => attempt(n + 1), DELAY_MS)
-                    return
-                }
                 console.warn(
-                    `[SyncEngine] Team join failed after ${MAX_ATTEMPTS} attempts for session ${sessionId} → team ${teamId}: ${error instanceof Error ? error.message : String(error)}`
+                    `[SyncEngine] Team join attempt ${n}/${MAX_ATTEMPTS} threw for session ${sessionId} → team ${teamId}: ${error instanceof Error ? error.message : String(error)}`
                 )
             }
+
+            if (n < MAX_ATTEMPTS) {
+                console.warn(
+                    `[SyncEngine] Team join attempt ${n}/${MAX_ATTEMPTS} failed for session ${sessionId} → team ${teamId}. Retrying in ${DELAY_MS}ms…`
+                )
+                setTimeout(() => attempt(n + 1), DELAY_MS)
+                return
+            }
+            console.warn(
+                `[SyncEngine] Team join failed after ${MAX_ATTEMPTS} attempts for session ${sessionId} → team ${teamId}`
+            )
         }
         attempt(1)
     }
