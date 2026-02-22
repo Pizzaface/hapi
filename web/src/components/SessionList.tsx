@@ -936,7 +936,7 @@ function SessionItem(props: {
                         {...dragHandleBindings.listeners}
                         disabled={!dndEnabled}
                         data-drag-handle={s.id}
-                        className={`inline-flex w-11 shrink-0 self-stretch items-center justify-center border-r text-[var(--app-hint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] ${dndEnabled ? 'cursor-grab active:cursor-grabbing hover:text-[var(--app-fg)]' : 'cursor-not-allowed opacity-50'}`}
+                        className={`inline-flex w-9 shrink-0 self-stretch items-center justify-center border-r text-[var(--app-hint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] ${dndEnabled ? 'cursor-grab active:cursor-grabbing hover:text-[var(--app-fg)]' : 'cursor-not-allowed opacity-50'}`}
                         style={{ borderColor: `var(${providerDisplay.colorVar})` }}
                         aria-label={dndEnabled
                             ? t('session.dragHandle.label', { name: sessionName })
@@ -946,12 +946,12 @@ function SessionItem(props: {
                             ? t('session.dragHandle.label', { name: sessionName })
                             : t('session.dragHandle.disabled')}
                     >
-                        <GripVerticalIcon className="h-5 w-5" />
+                        <GripVerticalIcon className="h-4 w-4" />
                     </button>
                     <button
                         type="button"
                         {...longPressHandlers}
-                        className="flex-1 min-w-0 flex flex-col gap-1.5 px-3 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
+                        className="flex-1 min-w-0 flex flex-col gap-0.5 px-2.5 py-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
                         aria-current={selected ? 'page' : undefined}
                         aria-pressed={selectionMode ? selectedForBulk : undefined}
                     >
@@ -970,7 +970,7 @@ function SessionItem(props: {
                                         className={`h-2 w-2 rounded-full ${statusDisplay.dotClass}${statusDisplay.animate ? ' animate-pulse' : ''}`}
                                     />
                                 </span>
-                                <div className={`truncate text-base font-medium${!s.active ? ' text-[var(--app-hint)]' : ''}`}>
+                                <div className={`truncate text-sm font-medium${!s.active ? ' text-[var(--app-hint)]' : ''}`}>
                                     {sessionName}
                                 </div>
                                 {s.acceptAllMessages ? (
@@ -1244,7 +1244,7 @@ function TeamGroupHeader(props: {
     return (
         <div
             data-group-header={group.teamName}
-            className={`sticky top-0 z-10 flex items-center gap-1 border-b border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-3 py-2 ${style === 'card' ? 'rounded-t-lg' : ''}`}
+            className={`sticky top-0 z-10 flex items-center gap-1 border-b border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-3 py-1.5 ${style === 'card' ? 'rounded-t-lg' : ''}`}
             style={headerStyle}
             onContextMenu={!isTouch ? handleContextMenu : undefined}
         >
@@ -1260,7 +1260,7 @@ function TeamGroupHeader(props: {
                 />
                 <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                        <span className="font-medium text-base break-words" title={group.teamName}>
+                        <span className="font-medium text-sm break-words" title={group.teamName}>
                             {group.teamName}
                         </span>
                         <span className="shrink-0 text-xs text-[var(--app-hint)]">
@@ -2145,7 +2145,7 @@ export function SessionList(props: {
 
                     return (
                         <div key={group.key}>
-                            <div data-group-header={group.directory} className="sticky top-0 z-10 flex items-center gap-1 border-b border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-3 py-2">
+                            <div data-group-header={group.directory} className="sticky top-0 z-10 flex items-center gap-1 border-b border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-3 py-1.5">
                                 <button
                                     type="button"
                                     onClick={() => toggleGroup(group.key, isCollapsed)}
@@ -2158,7 +2158,7 @@ export function SessionList(props: {
                                     />
                                     <div className="min-w-0 flex-1">
                                         <div className="flex items-center gap-2">
-                                            <span className="font-medium text-base break-words" title={group.directory}>
+                                            <span className="font-medium text-sm break-words" title={group.directory}>
                                                 {group.displayName}
                                             </span>
                                             <span className="shrink-0 text-xs text-[var(--app-hint)]">
