@@ -82,6 +82,7 @@ export default {
   'dialog.error.default': 'Operation failed. Please try again.',
 
   // Common buttons
+  'button.back': 'Back',
   'button.cancel': 'Cancel',
   'button.save': 'Save',
   'button.confirm': 'Confirm',
