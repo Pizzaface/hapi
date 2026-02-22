@@ -5,6 +5,64 @@
 The user runs a live HAPI hub on port 3006 with real data. Agents must **never**
 take screenshots against that instance. Always use the sandbox.
 
+## Feature state requirement
+
+Screenshots MUST show the specific UI state introduced by the PR. A screenshot
+that only shows the default/offline state does NOT demonstrate a status feature,
+a team feature, or any state-dependent UI.
+
+**Not acceptable — these are blockers, not disclaimers:**
+- "Sandbox sessions appear offline, so status labels aren't visible"
+- "Seed fixtures don't include teams, so screenshots show directory groups only"
+- "The indicator only appears during live sessions"
+
+The sandbox seeds teams, parent-child sessions, and diverse session states. The
+warm-sandbox script keeps active sessions alive with specific states (thinking,
+permission-pending, compacting). If the warm states don't cover your feature,
+**flag it as a blocker** and request seed data changes — do not ship a screenshot
+that doesn't show the feature.
+
+## Seeded session reference
+
+When the sandbox starts with `--seed`, these sessions and states are available.
+The warm-sandbox script (auto-started with `--seed`) keeps active sessions alive.
+
+| # | Name | Status | Dot | Team | Notes |
+|---|------|--------|-----|------|-------|
+| 1 | Refactor auth middleware | thinking | Blue pulse | api-redesign (parent) | acceptAllMessages, DoorOpenIcon, todos 1/4 |
+| 2 | S3 export for datasets | offline | Gray | — | Has image message for modal testing |
+| 3 | Staging DB cluster | waiting-for-permission | Amber pulse | api-redesign (child of 1) | Pending terraform apply |
+| 4 | Fix broken image paths | offline | Gray | — | Completed/idle |
+| 5 | Convert class components to hooks | thinking + compacting | Blue pulse + subtitle | always-on | Codex flavor, worktree branch chip |
+
+**Team aggregate statuses:**
+- **api-redesign** (indigo `#6366F1`, temporary): **needs-input** (amber) — session 3 has pending requests
+- **always-on** (green `#10B981`, persistent): **thinking** (blue) — session 5 is thinking
+
+**Ungrouped sessions** (directory groups):
+- Session 2: `projects/data-pipeline`
+- Session 4: `projects/blog`
+
+### Disabling warm states
+
+Use `--no-warm` to skip the warm-sandbox script. Sessions will go offline after
+30 seconds (useful for testing offline-only views):
+
+```bash
+bun scripts/sandbox-hub.ts start --seed --dev --no-warm
+```
+
+## Screenshot checklist
+
+Before attaching screenshots to a PR, verify:
+
+- [ ] Screenshot shows the NEW behavior introduced by this PR, not just existing UI
+- [ ] Specific visual elements from acceptance criteria are visible
+- [ ] If state-dependent (status dots, indicators, modals), the required state is active
+- [ ] If the feature requires interaction, `--steps` were used to trigger it
+- [ ] Both desktop and mobile viewports included (if layout differs)
+- [ ] No "feature not visible" disclaimers — these are blockers, not disclaimers
+
 ## Workflow
 
 ### 1. Start the sandbox (with seed data)
@@ -73,7 +131,7 @@ click, hover, or text input — like opening a session from the list.
 | hover | `{"hover": "<selector>"}` | Hover to reveal tooltips or menus |
 | scroll | `{"scroll": "<selector>"}` | Scroll element into view |
 
-Example — expand a project group, then open a session:
+Example — expand a team group, then open a session:
 
 ```bash
 HAPI_HOME=$SANDBOX_HOME bun scripts/ui-preview.ts --hub $SANDBOX_URL \
@@ -82,8 +140,9 @@ HAPI_HOME=$SANDBOX_HOME bun scripts/ui-preview.ts --hub $SANDBOX_URL \
     /sessions
 ```
 
-Note: the seeded sessions are grouped by project path. You may need to click the
-group name first to expand it before the session name becomes clickable.
+Note: seeded sessions are grouped by team (api-redesign, always-on) and by
+directory path (for ungrouped sessions). Click the team/group name first to
+expand it before the session name becomes clickable.
 
 ## Full example
 
@@ -93,16 +152,16 @@ bun run build:web
 bun scripts/sandbox-hub.ts start --seed --dev
 # Parse output for SANDBOX_URL and SANDBOX_HOME
 
-# Sessions list
+# Sessions list (shows team groups + status dots)
 HAPI_HOME=$SANDBOX_HOME bun scripts/ui-preview.ts \
     --hub $SANDBOX_URL \
     --output /tmp/hapi-sessions.png \
     /sessions
 
-# Open a session via interaction
+# Open a session via interaction (shows IntroCard, StatusBar, chat)
 HAPI_HOME=$SANDBOX_HOME bun scripts/ui-preview.ts \
     --hub $SANDBOX_URL \
-    --steps '[{"click":"text=api-redesign"},{"click":"text=Refactor auth"}]' \
+    --steps '[{"click":"text=api-redesign"},{"click":"text=Refactor auth"},{"wait":1500}]' \
     --output /tmp/hapi-session-detail.png \
     /sessions
 
@@ -111,6 +170,13 @@ HAPI_HOME=$SANDBOX_HOME bun scripts/ui-preview.ts \
     --hub $SANDBOX_URL \
     --viewport mobile \
     --output /tmp/hapi-sessions-mobile.png \
+    /sessions
+
+# Session with image message (for image modal / pinch-to-zoom testing)
+HAPI_HOME=$SANDBOX_HOME bun scripts/ui-preview.ts \
+    --hub $SANDBOX_URL \
+    --steps '[{"click":"text=data-pipeline"},{"click":"text=S3 export"},{"wait":1000}]' \
+    --output /tmp/hapi-image-message.png \
     /sessions
 
 # Stop

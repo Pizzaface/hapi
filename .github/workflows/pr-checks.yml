@@ -68,6 +68,27 @@ jobs:
                       }
 
                       if (hasScreenshotEvidence || hasNoUiOverride) {
+                          // Verify screenshot URLs are accessible (catch dead release assets)
+                          if (hasScreenshotEvidence) {
+                              const urlPattern = /https:\/\/github\.com\/[^\s)]+\.(?:png|jpe?g|gif|webp)/gi;
+                              const urls = [...new Set(body.match(urlPattern) ?? [])];
+                              const broken = [];
+                              for (const url of urls) {
+                                  try {
+                                      const resp = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(10000) });
+                                      if (!resp.ok) broken.push(`${url} (${resp.status})`);
+                                  } catch (err) {
+                                      broken.push(`${url} (network error)`);
+                                  }
+                              }
+                              if (broken.length > 0) {
+                                  core.warning(
+                                      `Screenshot URL(s) may be broken:\n` +
+                                      broken.map(u => `- ${u}`).join('\n') + '\n\n' +
+                                      `Verify the release assets exist and are publicly accessible.`
+                                  );
+                              }
+                          }
                           core.info('Screenshot policy check passed.');
                           return;
                       }

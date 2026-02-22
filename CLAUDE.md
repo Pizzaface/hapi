@@ -84,15 +84,23 @@ $ bun run typecheck
 
 ## Screenshots
 
-<Required for any UI change. Use the sandbox — never the live hub.>
+<Required for any UI change. Must demonstrate the feature being added.>
 
 <!--
-bun scripts/sandbox-hub.ts start --seed
+bun run build:web
+bun scripts/sandbox-hub.ts start --seed --dev
 HAPI_HOME=$SANDBOX_HOME bun scripts/ui-preview.ts --hub $SANDBOX_URL --output /tmp/pr-screenshot.png /sessions
 bun scripts/sandbox-hub.ts stop
 -->
 
-<If no UI changes, write: "No visual changes.">
+**Rules:**
+- Screenshot must show the NEW behavior, not just the page it lives on
+- For state-dependent UI (status dots, modals, tooltips), verify the required
+  state is active in the sandbox (see seed reference in `.claude/rules/screenshots.md`)
+- Use `--steps` to trigger interactive states (expand groups, open modals, hover)
+- "Feature not visible in screenshot" = blocker. Do not ship.
+
+<If no UI changes, write: "No visual changes." with brief explanation.>
 ```
 
 ### Rules
@@ -104,7 +112,7 @@ bun scripts/sandbox-hub.ts stop
 - **File walkthrough is mandatory**: Reviewers scan this first. Group by package, one line per file
 - **Test evidence is mandatory**: Paste real output, not "tests pass". Show the command and result
 - **Acceptance criteria from bead**: Copy verbatim and check off. If criteria were adjusted during implementation, note why
-- **Screenshots for UI work**: Use the sandbox (see `.claude/rules/screenshots.md`). Include desktop; add mobile if layout differs
+- **Screenshots for UI work**: Must demonstrate the feature (see `.claude/rules/screenshots.md`). Include desktop; add mobile if layout differs. "Feature not visible" disclaimers are blockers
 - **No empty sections**: If a section doesn't apply, write why (e.g., "No UI changes" or "No acceptance criteria — bug fix")
 - **Keep it scannable**: Use bullets and short lines. The description should take <60 seconds to read
 

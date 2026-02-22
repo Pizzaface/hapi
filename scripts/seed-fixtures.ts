@@ -24,6 +24,77 @@ function uuid(): string { return randomUUID() }
 
 function json(val: unknown): string { return JSON.stringify(val) }
 
+/**
+ * Generate a small solid-color PNG as base64 for seed image messages.
+ * Uses Bun.deflateSync to compress the raw pixel data.
+ */
+function generatePlaceholderPng(w: number, h: number, r: number, g: number, b: number): string {
+    function crc32(buf: Uint8Array): number {
+        let crc = ~0
+        for (const byte of buf) {
+            crc ^= byte
+            for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ (crc & 1 ? 0xEDB88320 : 0)
+        }
+        return ~crc >>> 0
+    }
+
+    function writeU32(view: DataView, offset: number, val: number): void {
+        view.setUint32(offset, val, false)
+    }
+
+    function pngChunk(type: string, data: Uint8Array): Uint8Array {
+        const typeBytes = new TextEncoder().encode(type)
+        const toCheck = new Uint8Array(typeBytes.length + data.length)
+        toCheck.set(typeBytes)
+        toCheck.set(data, typeBytes.length)
+        const crc = crc32(toCheck)
+
+        const result = new Uint8Array(4 + toCheck.length + 4)
+        const view = new DataView(result.buffer)
+        writeU32(view, 0, data.length)
+        result.set(toCheck, 4)
+        writeU32(view, 4 + toCheck.length, crc)
+        return result
+    }
+
+    // IHDR: width, height, 8-bit RGB
+    const ihdr = new Uint8Array(13)
+    const ihdrView = new DataView(ihdr.buffer)
+    writeU32(ihdrView, 0, w)
+    writeU32(ihdrView, 4, h)
+    ihdr[8] = 8  // bit depth
+    ihdr[9] = 2  // color type RGB
+
+    // Raw scanlines: filter-byte + w*3 per row
+    const raw = new Uint8Array(h * (1 + w * 3))
+    for (let y = 0; y < h; y++) {
+        const off = y * (1 + w * 3)
+        raw[off] = 0 // no filter
+        for (let x = 0; x < w; x++) {
+            // Simple gradient: darken toward bottom-right
+            const fade = 1 - (x + y) / (w + h) * 0.4
+            raw[off + 1 + x * 3 + 0] = Math.round(r * fade)
+            raw[off + 1 + x * 3 + 1] = Math.round(g * fade)
+            raw[off + 1 + x * 3 + 2] = Math.round(b * fade)
+        }
+    }
+
+    const compressed = Bun.deflateSync(raw)
+    const sig = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
+    const ihdrChunk = pngChunk('IHDR', ihdr)
+    const idatChunk = pngChunk('IDAT', new Uint8Array(compressed))
+    const iendChunk = pngChunk('IEND', new Uint8Array(0))
+
+    const png = new Uint8Array(sig.length + ihdrChunk.length + idatChunk.length + iendChunk.length)
+    let pos = 0
+    for (const part of [sig, ihdrChunk, idatChunk, iendChunk]) {
+        png.set(part, pos)
+        pos += part.length
+    }
+
+    return Buffer.from(png).toString('base64')
+}
+
 // ── Parse args ───────────────────────────────────────────────────────────────
 
 function parseArgs(): { dbPath: string } {
@@ -54,6 +125,15 @@ const MACHINES = {
     },
 }
 
+// Pre-generate session IDs so we can set parent_session_id references
+const SESSION_IDS = {
+    authRefactor: uuid(),   // session 1
+    s3Export: uuid(),       // session 2
+    terraform: uuid(),      // session 3
+    blogFix: uuid(),        // session 4
+    hooksMigration: uuid(), // session 5
+}
+
 type SessionFixture = {
     id: string
     tag: string
@@ -66,13 +146,18 @@ type SessionFixture = {
     todosUpdatedAt: number | null
     active: number
     activeAt: number | null
+    parentSessionId: string | null
+    acceptAllMessages: number
     messages: Array<{ role: string; content: unknown; createdAt: number }>
 }
 
+// Placeholder image for the S3 export session (blue gradient, 120x80)
+const PLACEHOLDER_IMAGE_B64 = generatePlaceholderPng(120, 80, 59, 130, 246)
+
 const sessions: SessionFixture[] = [
-    // ── Session 1: Active — auth refactor with todos ─────────────────────
+    // ── Session 1: Active — auth refactor with todos (team lead) ──────────
     {
-        id: uuid(),
+        id: SESSION_IDS.authRefactor,
         tag: `cli:${MACHINES.dev.id}:/home/alice/projects/api-redesign`,
         machineId: MACHINES.dev.id,
         createdAt: hoursAgo(2),
@@ -96,6 +181,8 @@ const sessions: SessionFixture[] = [
         todosUpdatedAt: hoursAgo(0.1),
         active: 1,
         activeAt: hoursAgo(0.05),
+        parentSessionId: null,
+        acceptAllMessages: 1,  // Team lead — accepts inter-agent messages
         messages: [
             {
                 role: 'user',
@@ -130,9 +217,9 @@ const sessions: SessionFixture[] = [
         ],
     },
 
-    // ── Session 2: Completed — S3 export ──────────────────────────────────
+    // ── Session 2: Completed — S3 export (with image message) ─────────────
     {
-        id: uuid(),
+        id: SESSION_IDS.s3Export,
         tag: `cli:${MACHINES.dev.id}:/home/alice/projects/data-pipeline`,
         machineId: MACHINES.dev.id,
         createdAt: hoursAgo(18),
@@ -150,6 +237,8 @@ const sessions: SessionFixture[] = [
         todosUpdatedAt: null,
         active: 0,
         activeAt: hoursAgo(16),
+        parentSessionId: null,
+        acceptAllMessages: 0,
         messages: [
             {
                 role: 'user',
@@ -163,8 +252,24 @@ const sessions: SessionFixture[] = [
             },
             {
                 role: 'assistant',
-                content: '```typescript\n// lib/exportS3.ts\nimport { S3Client, PutObjectCommand } from \'@aws-sdk/client-s3\'\n\nexport async function exportToS3(\n  data: string,\n  filename: string\n): Promise<string> {\n  const client = new S3Client({})\n  const key = `exports/${Date.now()}-${filename}`\n  await client.send(new PutObjectCommand({\n    Bucket: process.env.AWS_BUCKET,\n    Key: key,\n    Body: data,\n    ContentType: \'text/csv\',\n  }))\n  return key\n}\n```\n\nThe button is wired up in `DatasetView` with a loading state.',
+                content: [
+                    { type: 'text', text: 'Here\'s the data pipeline architecture:' },
+                    {
+                        type: 'image',
+                        source: {
+                            type: 'base64',
+                            media_type: 'image/png',
+                            data: PLACEHOLDER_IMAGE_B64,
+                        },
+                    },
+                    { type: 'text', text: 'The S3 export hooks into the output stage of the pipeline. I\'ll tap into the existing `DatasetWriter` interface.' },
+                ],
                 createdAt: hoursAgo(17),
+            },
+            {
+                role: 'assistant',
+                content: '```typescript\n// lib/exportS3.ts\nimport { S3Client, PutObjectCommand } from \'@aws-sdk/client-s3\'\n\nexport async function exportToS3(\n  data: string,\n  filename: string\n): Promise<string> {\n  const client = new S3Client({})\n  const key = `exports/${Date.now()}-${filename}`\n  await client.send(new PutObjectCommand({\n    Bucket: process.env.AWS_BUCKET,\n    Key: key,\n    Body: data,\n    ContentType: \'text/csv\',\n  }))\n  return key\n}\n```\n\nThe button is wired up in `DatasetView` with a loading state.',
+                createdAt: hoursAgo(16.8),
             },
             {
                 role: 'assistant',
@@ -174,9 +279,9 @@ const sessions: SessionFixture[] = [
         ],
     },
 
-    // ── Session 3: Awaiting permission — terraform ───────────────────────
+    // ── Session 3: Awaiting permission — terraform (child of session 1) ───
     {
-        id: uuid(),
+        id: SESSION_IDS.terraform,
         tag: `cli:${MACHINES.dev.id}:/home/alice/projects/infra`,
         machineId: MACHINES.dev.id,
         createdAt: hoursAgo(1),
@@ -204,6 +309,8 @@ const sessions: SessionFixture[] = [
         todosUpdatedAt: null,
         active: 1,
         activeAt: hoursAgo(0.3),
+        parentSessionId: SESSION_IDS.authRefactor,  // Child of session 1
+        acceptAllMessages: 0,
         messages: [
             {
                 role: 'user',
@@ -225,7 +332,7 @@ const sessions: SessionFixture[] = [
 
     // ── Session 4: Idle — quick bug fix ──────────────────────────────────
     {
-        id: uuid(),
+        id: SESSION_IDS.blogFix,
         tag: `cli:${MACHINES.dev.id}:/home/alice/projects/blog`,
         machineId: MACHINES.dev.id,
         createdAt: hoursAgo(24),
@@ -243,6 +350,8 @@ const sessions: SessionFixture[] = [
         todosUpdatedAt: null,
         active: 0,
         activeAt: hoursAgo(23),
+        parentSessionId: null,
+        acceptAllMessages: 0,
         messages: [
             {
                 role: 'user',
@@ -257,9 +366,9 @@ const sessions: SessionFixture[] = [
         ],
     },
 
-    // ── Session 5: Active — class → hooks migration (codex) ──────────────
+    // ── Session 5: Active — class → hooks migration (codex, with worktree)
     {
-        id: uuid(),
+        id: SESSION_IDS.hooksMigration,
         tag: `cli:${MACHINES.ci.id}:/home/runner/mobile-app`,
         machineId: MACHINES.ci.id,
         createdAt: hoursAgo(4),
@@ -271,6 +380,7 @@ const sessions: SessionFixture[] = [
             flavor: 'codex',
             lifecycleState: 'running',
             summary: { text: 'Converting class components to React hooks', updatedAt: hoursAgo(1.5) },
+            worktree: { branch: 'feat/hooks-migration', basePath: '/home/runner/mobile-app' },
         },
         agentState: { controlledByUser: false, requests: {}, completedRequests: {} },
         todos: [
@@ -282,6 +392,8 @@ const sessions: SessionFixture[] = [
         todosUpdatedAt: hoursAgo(1.5),
         active: 1,
         activeAt: hoursAgo(1.5),
+        parentSessionId: null,
+        acceptAllMessages: 0,
         messages: [
             {
                 role: 'user',
@@ -307,12 +419,32 @@ const sessions: SessionFixture[] = [
     },
 ]
 
+// ── Team definitions ─────────────────────────────────────────────────────────
+
+const ALWAYS_ON_TEAM_ID = 'always-on' // Seeded by V9 migration
+
+const TEAMS = {
+    apiRedesign: {
+        id: uuid(),
+        name: 'api-redesign',
+        color: '#6366F1',
+        persistent: 0,
+        ttlSeconds: 3600,
+        sortOrder: 'a1',
+        memberSessionIds: [SESSION_IDS.authRefactor, SESSION_IDS.terraform],
+    },
+    alwaysOn: {
+        id: ALWAYS_ON_TEAM_ID,
+        memberSessionIds: [SESSION_IDS.hooksMigration],
+    },
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 function main(): void {
     const { dbPath } = parseArgs()
 
-    // Initialize schema via Store constructor
+    // Initialize schema via Store constructor (runs migrations, seeds always-on team)
     new Store(dbPath)
 
     // Open raw connection for full-control inserts
@@ -331,13 +463,25 @@ function main(): void {
         INSERT INTO sessions
             (id, tag, namespace, machine_id, created_at, updated_at,
              metadata, metadata_version, agent_state, agent_state_version,
-             todos, todos_updated_at, active, active_at, seq)
-        VALUES (?, ?, 'default', ?, ?, ?, ?, 1, ?, 1, ?, ?, ?, ?, 0)
+             todos, todos_updated_at, active, active_at, seq,
+             parent_session_id, accept_all_messages)
+        VALUES (?, ?, 'default', ?, ?, ?, ?, 1, ?, 1, ?, ?, ?, ?, 0, ?, ?)
     `)
 
     const insertMessage = db.prepare(`
         INSERT INTO messages (id, session_id, content, created_at, seq, local_id)
         VALUES (?, ?, ?, ?, ?, NULL)
+    `)
+
+    const insertTeam = db.prepare(`
+        INSERT INTO teams
+            (id, name, namespace, color, persistent, ttl_seconds, sort_order, created_at)
+        VALUES (?, ?, 'default', ?, ?, ?, ?, ?)
+    `)
+
+    const insertTeamMember = db.prepare(`
+        INSERT INTO team_members (team_id, session_id, joined_at)
+        VALUES (?, ?, ?)
     `)
 
     // Insert machines
@@ -361,6 +505,8 @@ function main(): void {
             s.todos ? json(s.todos) : null,
             s.todosUpdatedAt,
             s.active, s.activeAt,
+            s.parentSessionId,
+            s.acceptAllMessages,
         )
 
         for (let seq = 0; seq < s.messages.length; seq++) {
@@ -375,8 +521,29 @@ function main(): void {
         }
     }
 
+    // Insert teams
+    insertTeam.run(
+        TEAMS.apiRedesign.id,
+        TEAMS.apiRedesign.name,
+        TEAMS.apiRedesign.color,
+        TEAMS.apiRedesign.persistent,
+        TEAMS.apiRedesign.ttlSeconds,
+        TEAMS.apiRedesign.sortOrder,
+        now,
+    )
+
+    // Insert team members
+    for (const sessionId of TEAMS.apiRedesign.memberSessionIds) {
+        insertTeamMember.run(TEAMS.apiRedesign.id, sessionId, now)
+    }
+    for (const sessionId of TEAMS.alwaysOn.memberSessionIds) {
+        insertTeamMember.run(ALWAYS_ON_TEAM_ID, sessionId, now)
+    }
+
     const msgCount = sessions.reduce((n, s) => n + s.messages.length, 0)
-    console.log(`Seeded: ${Object.keys(MACHINES).length} machines, ${sessions.length} sessions, ${msgCount} messages → ${dbPath}`)
+    const teamCount = Object.keys(TEAMS).length
+    const memberCount = TEAMS.apiRedesign.memberSessionIds.length + TEAMS.alwaysOn.memberSessionIds.length
+    console.log(`Seeded: ${Object.keys(MACHINES).length} machines, ${sessions.length} sessions, ${msgCount} messages, ${teamCount} teams, ${memberCount} members → ${dbPath}`)
 }
 
 main()

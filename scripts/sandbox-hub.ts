@@ -13,6 +13,7 @@ type SandboxState = {
     home: string
     startedAt: number
     token: string
+    warmPid?: number
 }
 
 function isAlive(pid: number): boolean {
@@ -68,11 +69,13 @@ async function start(args: string[]): Promise<void> {
     let preferredPort: number | undefined
     let seed = false
     let dev = false
+    let noWarm = false
 
     for (let i = 0; i < args.length; i++) {
         if (args[i] === '--port') preferredPort = parseInt(args[++i], 10)
         else if (args[i] === '--seed') seed = true
         else if (args[i] === '--dev') dev = true
+        else if (args[i] === '--no-warm') noWarm = true
     }
 
     await cleanStale()
@@ -152,6 +155,29 @@ async function start(args: string[]): Promise<void> {
             } catch {}
 
             const state: SandboxState = { pid, port, home, startedAt: Date.now(), token }
+
+            // Start warm-sandbox to keep seeded sessions alive with specific states
+            if (seed && !noWarm) {
+                const warmScript = resolve(dirname(fileURLToPath(import.meta.url)), 'warm-sandbox.ts')
+                const warmLogFd = openSync(hubLog, 'a')
+                const warmProc = Bun.spawn(['bun', warmScript], {
+                    cwd: join(projectRoot, 'cli'),
+                    env: {
+                        ...process.env,
+                        SANDBOX_PORT: String(port),
+                        SANDBOX_TOKEN: token,
+                        SANDBOX_DB: dbPath,
+                    },
+                    stdout: warmLogFd,
+                    stderr: warmLogFd,
+                    stdin: 'ignore',
+                })
+                closeSync(warmLogFd)
+                warmProc.unref()
+                state.warmPid = warmProc.pid
+                console.log(`==> Warm-sandbox started (pid ${warmProc.pid})`)
+            }
+
             await Bun.write(STATE_FILE, JSON.stringify(state, null, 2))
 
             console.log(`==> Sandbox hub ready (pid ${pid}${dev ? ', dev mode' : ''})`)
@@ -184,6 +210,12 @@ async function stop(): Promise<void> {
         return
     }
 
+    // Stop warm-sandbox first
+    if (state.warmPid && isAlive(state.warmPid)) {
+        console.log(`==> Stopping warm-sandbox (pid ${state.warmPid})...`)
+        try { process.kill(state.warmPid, 'SIGTERM') } catch {}
+    }
+
     console.log(`==> Stopping sandbox (pid ${state.pid})...`)
     process.kill(state.pid, 'SIGTERM')
 
@@ -210,7 +242,8 @@ async function status(): Promise<void> {
         process.exit(0)
     }
     const started = new Date(state.startedAt).toISOString()
-    console.log(`Sandbox running: pid=${state.pid} port=${state.port} home=${state.home} started=${started}`)
+    const warm = state.warmPid && isAlive(state.warmPid) ? ` warm=${state.warmPid}` : ''
+    console.log(`Sandbox running: pid=${state.pid} port=${state.port} home=${state.home} started=${started}${warm}`)
 }
 
 // --- Main ---
@@ -224,10 +257,11 @@ switch (cmd) {
     default:
         console.log(`Usage: bun scripts/sandbox-hub.ts <start|stop|status>
 
-  start [--port <n>] [--seed] [--dev]   Start isolated hub
-    --seed   Populate DB with fixture data
-    --dev    Run hub from TypeScript source (serves web/dist from disk)
-  stop                                  Kill sandbox and clean up
-  status                                Check if sandbox is running`)
+  start [--port <n>] [--seed] [--dev] [--no-warm]   Start isolated hub
+    --seed      Populate DB with fixture data
+    --dev       Run hub from TypeScript source (serves web/dist from disk)
+    --no-warm   Skip warm-sandbox (sessions will go offline after 30s)
+  stop                                               Kill sandbox and clean up
+  status                                             Check if sandbox is running`)
         process.exit(cmd ? 1 : 0)
 }
