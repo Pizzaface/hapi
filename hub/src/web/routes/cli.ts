@@ -31,7 +31,8 @@ const spawnMachineSessionSchema = z.object({
     worktreeName: z.string().optional(),
     worktreeBranch: z.string().optional(),
     initialPrompt: z.string().max(INITIAL_PROMPT_MAX_LENGTH).optional(),
-    teamId: z.string().optional()
+    teamId: z.string().optional(),
+    parentSessionId: z.string().optional()
 })
 
 const restartSessionsSchema = z.object({
@@ -271,6 +272,7 @@ export function createCliRoutes(getSyncEngine: () => SyncEngine | null, store: S
             worktreeBranch: parsed.data.worktreeBranch,
             initialPrompt: parsed.data.initialPrompt,
             teamId: parsed.data.teamId,
+            parentSessionId: parsed.data.parentSessionId,
             namespace
         })
 

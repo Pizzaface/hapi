@@ -15,7 +15,8 @@ const spawnBodySchema = z.object({
     worktreeName: z.string().optional(),
     worktreeBranch: z.string().optional(),
     initialPrompt: z.string().max(INITIAL_PROMPT_MAX_LENGTH).optional(),
-    teamId: z.string().optional()
+    teamId: z.string().optional(),
+    parentSessionId: z.string().optional()
 })
 
 const pathsExistsSchema = z.object({
@@ -87,6 +88,7 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null): Ho
             worktreeBranch: parsed.data.worktreeBranch,
             initialPrompt: parsed.data.initialPrompt,
             teamId: parsed.data.teamId,
+            parentSessionId: parsed.data.parentSessionId,
             namespace
         })
         return c.json(result)

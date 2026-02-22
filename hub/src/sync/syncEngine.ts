@@ -77,6 +77,7 @@ export type SpawnSessionOptions = {
     initialPrompt?: string
     resumeSessionId?: string
     teamId?: string
+    parentSessionId?: string
     namespace?: string
 }
 
@@ -531,6 +532,7 @@ export class SyncEngine {
             initialPrompt,
             resumeSessionId,
             teamId,
+            parentSessionId,
             namespace
         } = opts
 
@@ -552,6 +554,11 @@ export class SyncEngine {
         const normalizedPrompt = typeof initialPrompt === 'string' ? initialPrompt.trim() : ''
         const needsPromptDelivery = normalizedPrompt.length > 0
         const needsTeamJoin = typeof teamId === 'string' && teamId.length > 0 && typeof namespace === 'string'
+        const needsParentLink = typeof parentSessionId === 'string' && parentSessionId.length > 0 && typeof namespace === 'string'
+
+        if (needsParentLink) {
+            this.trySetParentSession(spawnResult.sessionId, parentSessionId!, namespace!)
+        }
 
         if (!needsPromptDelivery && !needsTeamJoin) {
             return spawnResult
@@ -623,6 +630,37 @@ export class SyncEngine {
             }
             console.warn(
                 `[SyncEngine] Team join failed after ${MAX_ATTEMPTS} attempts for session ${sessionId} → team ${teamId}`
+            )
+        }
+        attempt(1)
+    }
+
+    private trySetParentSession(sessionId: string, parentSessionId: string, namespace: string): void {
+        const MAX_ATTEMPTS = 3
+        const DELAY_MS = 500
+
+        const attempt = (n: number) => {
+            try {
+                const updated = this.store.sessions.setParentSessionId(sessionId, parentSessionId, namespace)
+                if (updated) {
+                    this.sessionCache.refreshSession(sessionId)
+                    return
+                }
+            } catch (error) {
+                console.warn(
+                    `[SyncEngine] Parent session link attempt ${n}/${MAX_ATTEMPTS} threw for session ${sessionId} → parent ${parentSessionId}: ${error instanceof Error ? error.message : String(error)}`
+                )
+            }
+
+            if (n < MAX_ATTEMPTS) {
+                console.warn(
+                    `[SyncEngine] Parent session link attempt ${n}/${MAX_ATTEMPTS} failed for session ${sessionId} → parent ${parentSessionId}. Retrying in ${DELAY_MS}ms…`
+                )
+                setTimeout(() => attempt(n + 1), DELAY_MS)
+                return
+            }
+            console.warn(
+                `[SyncEngine] Parent session link failed after ${MAX_ATTEMPTS} attempts for session ${sessionId} → parent ${parentSessionId}`
             )
         }
         attempt(1)

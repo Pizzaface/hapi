@@ -105,7 +105,8 @@ export async function startHappyServer(client: ApiSessionClient) {
                 worktreeName: input.worktreeName,
                 worktreeBranch: input.worktreeBranch,
                 initialPrompt: input.initialPrompt,
-                teamId: input.teamId
+                teamId: input.teamId,
+                parentSessionId: client.sessionId
             })
 
             if (result.type !== 'success') {
