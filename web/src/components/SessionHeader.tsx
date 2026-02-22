@@ -133,6 +133,7 @@ export function SessionHeader(props: {
                     <button
                         type="button"
                         onClick={props.onBack}
+                        aria-label={t('button.back')}
                         className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
                     >
                         <svg

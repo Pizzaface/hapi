@@ -84,6 +84,7 @@ export default {
   'dialog.error.default': '操作失败，请重试。',
 
   // Common buttons
+  'button.back': '返回',
   'button.cancel': '取消',
   'button.save': '保存',
   'button.confirm': '确认',
