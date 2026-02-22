@@ -69,9 +69,9 @@ export class MessageService {
             text: string
             localId?: string | null
             attachments?: AttachmentMetadata[]
-            sentFrom?: 'telegram-bot' | 'webapp'
+            sentFrom?: 'telegram-bot' | 'webapp' | 'spawn' | 'inter-agent'
         }
-    ): Promise<void> {
+    ): Promise<string> {
         const sentFrom = payload.sentFrom ?? 'webapp'
 
         const content = {
@@ -117,5 +117,7 @@ export class MessageService {
                 createdAt: msg.createdAt
             }
         })
+
+        return msg.id
     }
 }

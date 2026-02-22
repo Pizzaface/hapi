@@ -2,10 +2,14 @@ import type {
     AttachmentMetadata,
     AuthResponse,
     DeleteUploadResponse,
+    ClearInactiveSessionsOlderThan,
+    ClearInactiveSessionsResponse,
+    HealthResponse,
     ListDirectoryResponse,
     FileReadResponse,
     FileSearchResponse,
     GitCommandResponse,
+    MachineAgentsResponse,
     MachineGitBranchesResponse,
     MachinePathsExistsResponse,
     MachinesResponse,
@@ -24,7 +28,9 @@ import type {
     UploadFileResponse,
     VisibilityPayload,
     SessionResponse,
-    SessionsResponse
+    SessionBeadsResponse,
+    SessionsResponse,
+    TeamsResponse
 } from '@/types/api'
 
 type ApiClientOptions = {
@@ -137,6 +143,14 @@ export class ApiClient {
         return await res.json() as T
     }
 
+    async getHealth(): Promise<HealthResponse> {
+        const res = await fetch(this.buildUrl('/health'))
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status} ${res.statusText}`)
+        }
+        return await res.json() as HealthResponse
+    }
+
     async authenticate(auth: { initData: string } | { accessToken: string }): Promise<AuthResponse> {
         const res = await fetch(this.buildUrl('/api/auth'), {
             method: 'POST',
@@ -173,6 +187,39 @@ export class ApiClient {
 
     async getSessions(): Promise<SessionsResponse> {
         return await this.request<SessionsResponse>('/api/sessions')
+    }
+
+    async getTeams(): Promise<TeamsResponse> {
+        return await this.request<TeamsResponse>('/api/teams')
+    }
+
+    async createTeam(name: string, opts?: { color?: string; persistent?: boolean }): Promise<{ team: { id: string; name: string; color: string | null } }> {
+        return await this.request('/api/teams', {
+            method: 'POST',
+            body: JSON.stringify({ name, ...opts })
+        })
+    }
+
+    async updateTeam(teamId: string, fields: { name?: string; color?: string | null }): Promise<void> {
+        await this.request(`/api/teams/${encodeURIComponent(teamId)}`, {
+            method: 'PATCH',
+            body: JSON.stringify(fields)
+        })
+    }
+
+    async deleteTeam(teamId: string): Promise<void> {
+        await this.request(`/api/teams/${encodeURIComponent(teamId)}`, {
+            method: 'DELETE'
+        })
+    }
+
+    async clearInactiveSessions(
+        olderThan: ClearInactiveSessionsOlderThan = '30d'
+    ): Promise<ClearInactiveSessionsResponse> {
+        return await this.request<ClearInactiveSessionsResponse>('/api/sessions/clear-inactive', {
+            method: 'POST',
+            body: JSON.stringify({ olderThan })
+        })
     }
 
     async getPushVapidPublicKey(): Promise<PushVapidPublicKeyResponse> {
@@ -213,6 +260,10 @@ export class ApiClient {
 
     async getSession(sessionId: string): Promise<SessionResponse> {
         return await this.request<SessionResponse>(`/api/sessions/${encodeURIComponent(sessionId)}`)
+    }
+
+    async getSessionBeads(sessionId: string): Promise<SessionBeadsResponse> {
+        return await this.request<SessionBeadsResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/beads`)
     }
 
     async getMessages(sessionId: string, options: { beforeSeq?: number | null; limit?: number }): Promise<MessagesResponse> {
@@ -421,6 +472,19 @@ export class ApiClient {
         )
     }
 
+    async listMachineAgents(
+        machineId: string,
+        directory: string
+    ): Promise<MachineAgentsResponse> {
+        return await this.request<MachineAgentsResponse>(
+            `/api/machines/${encodeURIComponent(machineId)}/agents`,
+            {
+                method: 'POST',
+                body: JSON.stringify({ directory })
+            }
+        )
+    }
+
     async spawnSession(
         machineId: string,
         directory: string,
@@ -429,11 +493,13 @@ export class ApiClient {
         yolo?: boolean,
         sessionType?: 'simple' | 'worktree',
         worktreeName?: string,
-        worktreeBranch?: string
+        worktreeBranch?: string,
+        initialPrompt?: string,
+        parentSessionId?: string
     ): Promise<SpawnResponse> {
         return await this.request<SpawnResponse>(`/api/machines/${encodeURIComponent(machineId)}/spawn`, {
             method: 'POST',
-            body: JSON.stringify({ directory, agent, model, yolo, sessionType, worktreeName, worktreeBranch })
+            body: JSON.stringify({ directory, agent, model, yolo, sessionType, worktreeName, worktreeBranch, initialPrompt, parentSessionId })
         })
     }
 
@@ -456,9 +522,23 @@ export class ApiClient {
         })
     }
 
+    async setSessionSortOrder(sessionId: string, sortOrder: string): Promise<void> {
+        await this.request(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ sort_order: sortOrder })
+        })
+    }
+
     async deleteSession(sessionId: string): Promise<void> {
         await this.request(`/api/sessions/${encodeURIComponent(sessionId)}`, {
             method: 'DELETE'
+        })
+    }
+
+    async exitSession(sessionId: string): Promise<void> {
+        await this.request(`/api/sessions/${encodeURIComponent(sessionId)}/exit`, {
+            method: 'POST',
+            body: JSON.stringify({})
         })
     }
 

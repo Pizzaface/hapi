@@ -58,7 +58,7 @@ export interface TunnelConfig {
     localPort: number
     enabled: boolean
     apiDomain?: string | null  // TUNWG_API - default: relay.hapi.run (official relay)
-    authKey?: string | null    // TUNWG_AUTH - default: hapi
+    authKey?: string | null    // TUNWG_AUTH - auto-generated if not set
     useRelay?: boolean         // TUNWG_RELAY
 }
 

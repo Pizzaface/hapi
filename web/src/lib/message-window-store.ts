@@ -1,6 +1,6 @@
 import type { ApiClient } from '@/api/client'
 import type { DecryptedMessage, MessageStatus } from '@/types/api'
-import { normalizeDecryptedMessage } from '@/chat/normalize'
+import { normalizeDecryptedMessage, isPermissionPromptMessage } from '@/chat/normalize'
 import { mergeMessages } from '@/lib/messages'
 
 export type MessageWindowState = {
@@ -16,6 +16,7 @@ export type MessageWindowState = {
     warning: string | null
     atBottom: boolean
     messagesVersion: number
+    hasPendingPermissionPrompt: boolean
 }
 
 export const VISIBLE_WINDOW_SIZE = 400
@@ -27,6 +28,7 @@ type InternalState = MessageWindowState & {
     pendingOverflowCount: number
     pendingVisibleCount: number
     pendingOverflowVisibleCount: number
+    pendingPermissionRequestIds: Set<string>
 }
 
 type PendingVisibilityCacheEntry = {
@@ -86,6 +88,8 @@ function syncPendingVisibilityCache(sessionId: string, pending: DecryptedMessage
     }
 }
 
+const EMPTY_SET: Set<string> = new Set()
+
 function createState(sessionId: string): InternalState {
     return {
         sessionId,
@@ -103,6 +107,8 @@ function createState(sessionId: string): InternalState {
         atBottom: true,
         messagesVersion: 0,
         pendingOverflowCount: 0,
+        hasPendingPermissionPrompt: false,
+        pendingPermissionRequestIds: EMPTY_SET,
     }
 }
 
@@ -154,6 +160,15 @@ function deriveSeqBounds(messages: DecryptedMessage[]): { oldestSeq: number | nu
     return { oldestSeq: oldest, newestSeq: newest }
 }
 
+function hasPendingPermissionPromptInQueue(
+    pending: DecryptedMessage[],
+    requestIds: Set<string>,
+    atBottom: boolean
+): boolean {
+    if (atBottom || requestIds.size === 0 || pending.length === 0) return false
+    return pending.some((msg) => isPermissionPromptMessage(msg, requestIds))
+}
+
 function buildState(
     prev: InternalState,
     updates: {
@@ -167,6 +182,8 @@ function buildState(
         isLoadingMore?: boolean
         warning?: string | null
         atBottom?: boolean
+        hasPendingPermissionPrompt?: boolean
+        pendingPermissionRequestIds?: Set<string>
     }
 ): InternalState {
     const messages = updates.messages ?? prev.messages
@@ -185,6 +202,11 @@ function buildState(
     const { oldestSeq, newestSeq } = deriveSeqBounds(messages)
     const messagesVersion = messages === prev.messages ? prev.messagesVersion : prev.messagesVersion + 1
 
+    const atBottom = updates.atBottom !== undefined ? updates.atBottom : prev.atBottom
+    const pendingPermissionRequestIds = updates.pendingPermissionRequestIds ?? prev.pendingPermissionRequestIds
+    const hasPendingPermissionPrompt = updates.hasPendingPermissionPrompt
+        ?? hasPendingPermissionPromptInQueue(pending, pendingPermissionRequestIds, atBottom)
+
     return {
         ...prev,
         messages,
@@ -199,8 +221,10 @@ function buildState(
         isLoading: updates.isLoading !== undefined ? updates.isLoading : prev.isLoading,
         isLoadingMore: updates.isLoadingMore !== undefined ? updates.isLoadingMore : prev.isLoadingMore,
         warning: updates.warning !== undefined ? updates.warning : prev.warning,
-        atBottom: updates.atBottom !== undefined ? updates.atBottom : prev.atBottom,
+        atBottom,
         messagesVersion,
+        hasPendingPermissionPrompt,
+        pendingPermissionRequestIds,
     }
 }
 
@@ -216,10 +240,34 @@ function trimVisible(messages: DecryptedMessage[], mode: 'append' | 'prepend'): 
 
 function trimPending(
     sessionId: string,
-    messages: DecryptedMessage[]
+    messages: DecryptedMessage[],
+    protectedIds?: Set<string>
 ): { pending: DecryptedMessage[]; dropped: number; droppedVisible: number } {
     if (messages.length <= PENDING_WINDOW_SIZE) {
         return { pending: messages, dropped: 0, droppedVisible: 0 }
+    }
+    // If we have protected IDs (permission prompts), never drop those messages.
+    if (protectedIds && protectedIds.size > 0) {
+        const protectedMessages: DecryptedMessage[] = []
+        const droppable: DecryptedMessage[] = []
+        for (const msg of messages) {
+            if (isPermissionPromptMessage(msg, protectedIds)) {
+                protectedMessages.push(msg)
+            } else {
+                droppable.push(msg)
+            }
+        }
+        if (droppable.length <= PENDING_WINDOW_SIZE) {
+            return { pending: messages, dropped: 0, droppedVisible: 0 }
+        }
+        const cutoff = droppable.length - PENDING_WINDOW_SIZE
+        const droppedMessages = droppable.slice(0, cutoff)
+        const keptDroppable = droppable.slice(cutoff)
+        const pending = [...protectedMessages, ...keptDroppable].sort(
+            (a, b) => (a.seq ?? 0) - (b.seq ?? 0) || a.createdAt - b.createdAt
+        )
+        const droppedVisible = countVisiblePendingMessages(sessionId, droppedMessages)
+        return { pending, dropped: droppedMessages.length, droppedVisible }
     }
     const cutoff = messages.length - PENDING_WINDOW_SIZE
     const droppedMessages = messages.slice(0, cutoff)
@@ -261,7 +309,7 @@ function mergeIntoPending(
     }
     const mergedPending = mergeMessages(prev.pending, incoming)
     const filtered = filterPendingAgainstVisible(mergedPending, prev.messages)
-    const { pending, dropped, droppedVisible } = trimPending(prev.sessionId, filtered)
+    const { pending, dropped, droppedVisible } = trimPending(prev.sessionId, filtered, prev.pendingPermissionRequestIds)
     const pendingVisibleCount = countVisiblePendingMessages(prev.sessionId, pending)
     const pendingOverflowCount = prev.pendingOverflowCount + dropped
     const pendingOverflowVisibleCount = prev.pendingOverflowVisibleCount + droppedVisible
@@ -422,6 +470,7 @@ export function flushPendingMessages(sessionId: string): boolean {
             pendingVisibleCount: 0,
             pendingOverflowVisibleCount: 0,
             warning: needsRefresh ? (prev.warning ?? PENDING_OVERFLOW_WARNING) : prev.warning,
+            hasPendingPermissionPrompt: false,
         })
     })
     return needsRefresh
@@ -442,6 +491,21 @@ export function appendOptimisticMessage(sessionId: string, message: DecryptedMes
         const trimmed = trimVisible(merged, 'append')
         const pending = filterPendingAgainstVisible(prev.pending, trimmed)
         return buildState(prev, { messages: trimmed, pending, atBottom: true })
+    })
+}
+
+export function setPendingPermissionRequestIds(sessionId: string, ids: Set<string>): void {
+    updateState(sessionId, (prev) => {
+        if (prev.pendingPermissionRequestIds === ids) {
+            return prev
+        }
+        // Shallow-compare contents to avoid unnecessary recomputation when
+        // the caller creates a new Set with the same IDs each render.
+        const prevIds = prev.pendingPermissionRequestIds
+        if (prevIds.size === ids.size && [...ids].every((id) => prevIds.has(id))) {
+            return prev
+        }
+        return buildState(prev, { pendingPermissionRequestIds: ids })
     })
 }
 

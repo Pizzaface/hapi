@@ -21,6 +21,7 @@ import { createCliRoutes } from './routes/cli'
 import { createPushRoutes } from './routes/push'
 import { createVoiceRoutes } from './routes/voice'
 import { createPreferencesRoutes } from './routes/preferences'
+import { createTeamsRoutes } from './routes/teams'
 import type { SSEManager } from '../sse/sseManager'
 import type { VisibilityTracker } from '../visibility/visibilityTracker'
 import type { Server as BunServer } from 'bun'
@@ -30,6 +31,9 @@ import { loadEmbeddedAssetMap, type EmbeddedWebAsset } from './embeddedAssets'
 import { isBunCompiled } from '../utils/bunCompiled'
 import type { Store } from '../store'
 import { handleVoiceUpgrade, createVoiceWsHandlers, type VoiceWebSocketData } from './voiceWebSocket'
+import { totalmem } from 'node:os'
+import { getCpuPercent, startCpuSampler } from './cpuSampler'
+import { getMemUsedBytes } from './systemMem'
 
 type MuxWebSocketData = WebSocketData | VoiceWebSocketData
 
@@ -77,19 +81,27 @@ export function createWebApp(options: {
     app.use('*', secureHeaders())
 
     // Health check endpoint (no auth required)
-    app.get('/health', (c) => c.json({ status: 'ok', protocolVersion: PROTOCOL_VERSION }))
+    app.get('/health', (c) => c.json({
+        status: 'ok',
+        protocolVersion: PROTOCOL_VERSION,
+        system: {
+            cpuPercent: getCpuPercent(),
+            memUsedBytes: getMemUsedBytes(),
+            memTotalBytes: totalmem(),
+        },
+    }))
 
     const corsOrigins = options.corsOrigins ?? configuration.corsOrigins
     const corsOriginOption = corsOrigins.includes('*') ? '*' : corsOrigins
     const corsMiddleware = cors({
         origin: corsOriginOption,
-        allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+        allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
         allowHeaders: ['authorization', 'content-type']
     })
     app.use('/api/*', corsMiddleware)
     app.use('/cli/*', corsMiddleware)
 
-    app.route('/cli', createCliRoutes(options.getSyncEngine))
+    app.route('/cli', createCliRoutes(options.getSyncEngine, options.store))
 
     app.route('/api', createAuthRoutes(options.jwtSecret, options.store))
     app.route('/api', createBindRoutes(options.jwtSecret, options.store))
@@ -103,6 +115,7 @@ export function createWebApp(options: {
     app.route('/api', createGitRoutes(options.getSyncEngine))
     app.route('/api', createPushRoutes(options.store, options.vapidPublicKey))
     app.route('/api', createPreferencesRoutes(options.store))
+    app.route('/api', createTeamsRoutes(options.store, options.getSyncEngine))
     app.route('/api', createVoiceRoutes())
 
     // Skip static serving in relay mode, show helpful message on root
@@ -220,6 +233,8 @@ export async function startWebServer(options: {
     relayMode?: boolean
     officialWebUrl?: string
 }): Promise<BunServer<MuxWebSocketData>> {
+    startCpuSampler()
+
     const isCompiled = isBunCompiled()
     const embeddedAssetMap = isCompiled ? await loadEmbeddedAssetMap() : null
     const app = createWebApp({

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Outlet, useLocation, useMatchRoute, useRouter } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { getTelegramWebApp, isTelegramApp } from '@/hooks/useTelegram'
+import { imageModalState } from '@/lib/image-modal-state'
 import { initializeTheme } from '@/hooks/useTheme'
 import { useAuth } from '@/hooks/useAuth'
 import { useAuthSource } from '@/hooks/useAuthSource'
@@ -14,6 +15,7 @@ import { queryKeys } from '@/lib/query-keys'
 import { AppContextProvider } from '@/lib/app-context'
 import { fetchLatestMessages } from '@/lib/message-window-store'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
+import { DrawerBackInterceptorProvider } from '@/lib/drawer-back-interceptor'
 import { useTranslation } from '@/lib/use-translation'
 import { VoiceProvider } from '@/lib/voice-context'
 import { requireHubUrlForLogin } from '@/lib/runtime-config'
@@ -24,6 +26,7 @@ import { OfflineBanner } from '@/components/OfflineBanner'
 import { SyncingBanner } from '@/components/SyncingBanner'
 import { ReconnectingBanner } from '@/components/ReconnectingBanner'
 import { VoiceErrorBanner } from '@/components/VoiceErrorBanner'
+import { PendingPromptsBanner } from '@/components/PendingPromptsBanner'
 import { LoadingState } from '@/components/LoadingState'
 import { ToastContainer } from '@/components/ToastContainer'
 import { ToastProvider, useToast } from '@/lib/toast-context'
@@ -35,9 +38,11 @@ const REQUIRE_SERVER_URL = requireHubUrlForLogin()
 
 export function App() {
     return (
-        <ToastProvider>
-            <AppInner />
-        </ToastProvider>
+        <DrawerBackInterceptorProvider>
+            <ToastProvider>
+                <AppInner />
+            </ToastProvider>
+        </DrawerBackInterceptorProvider>
     )
 }
 
@@ -60,7 +65,9 @@ function AppInner() {
     }, [])
 
     useEffect(() => {
-        const preventDefault = (event: Event) => {
+        const preventGesture = (event: Event) => {
+            // Allow pinch gestures when image zoom modal is open
+            if (imageModalState.isOpen) return
             event.preventDefault()
         }
 
@@ -78,17 +85,17 @@ function AppInner() {
             }
         }
 
-        document.addEventListener('gesturestart', preventDefault as EventListener, { passive: false })
-        document.addEventListener('gesturechange', preventDefault as EventListener, { passive: false })
-        document.addEventListener('gestureend', preventDefault as EventListener, { passive: false })
+        document.addEventListener('gesturestart', preventGesture as EventListener, { passive: false })
+        document.addEventListener('gesturechange', preventGesture as EventListener, { passive: false })
+        document.addEventListener('gestureend', preventGesture as EventListener, { passive: false })
 
         window.addEventListener('wheel', onWheel, { passive: false })
         window.addEventListener('keydown', onKeyDown)
 
         return () => {
-            document.removeEventListener('gesturestart', preventDefault as EventListener)
-            document.removeEventListener('gesturechange', preventDefault as EventListener)
-            document.removeEventListener('gestureend', preventDefault as EventListener)
+            document.removeEventListener('gesturestart', preventGesture as EventListener)
+            document.removeEventListener('gesturechange', preventGesture as EventListener)
+            document.removeEventListener('gestureend', preventGesture as EventListener)
 
             window.removeEventListener('wheel', onWheel)
             window.removeEventListener('keydown', onKeyDown)
@@ -252,19 +259,25 @@ function AppInner() {
             url: event.data.url
         })
     }, [addToast])
+    const handleActiveSessionRemoved = useCallback(async (_sessionId: string) => {
+        await router.navigate({
+            to: '/sessions',
+            replace: true
+        })
+    }, [router])
 
-    const eventSubscription = useMemo(() => {
-        if (selectedSessionId) {
-            return { sessionId: selectedSessionId }
-        }
-        return { all: true }
-    }, [selectedSessionId])
+    const eventSubscription = useMemo(
+        () => ({ all: true }),
+        []
+    )
 
     const { subscriptionId } = useSSE({
         enabled: Boolean(api && token),
         token: token ?? '',
         baseUrl,
         subscription: eventSubscription,
+        activeSessionId: selectedSessionId,
+        onActiveSessionRemoved: handleActiveSessionRemoved,
         onConnect: handleSseConnect,
         onDisconnect: handleSseDisconnect,
         onEvent: handleSseEvent,
@@ -382,8 +395,11 @@ function AppInner() {
                 <ReconnectingBanner isReconnecting={sseDisconnected && !isSyncing} />
                 <VoiceErrorBanner />
                 <OfflineBanner />
+                <PendingPromptsBanner api={api} currentSessionId={selectedSessionId} />
                 <div className="h-full flex flex-col">
-                    <Outlet />
+                    <div className="min-h-0 flex-1">
+                        <Outlet />
+                    </div>
                 </div>
                 <ToastContainer />
                 <InstallPrompt />

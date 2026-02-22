@@ -14,7 +14,7 @@
  * - HAPI_PUBLIC_URL: Public URL for external access (e.g., Telegram Mini App)
  * - CORS_ORIGINS: Comma-separated CORS origins
  * - HAPI_RELAY_API: Relay API domain for tunwg (default: relay.hapi.run)
- * - HAPI_RELAY_AUTH: Relay auth key for tunwg (default: hapi)
+ * - HAPI_RELAY_AUTH: Relay auth key for tunwg (auto-generated if not set)
  * - HAPI_RELAY_FORCE_TCP: Force TCP relay mode when UDP is unavailable (true/1)
  * - VAPID_SUBJECT: Contact email or URL for Web Push (defaults to mailto:admin@hapi.run)
  * - HAPI_HOME: Data directory (default: ~/.hapi)
@@ -115,7 +115,7 @@ class Configuration {
 
         // Ensure data directory exists
         if (!existsSync(this.dataDir)) {
-            mkdirSync(this.dataDir, { recursive: true })
+            mkdirSync(this.dataDir, { recursive: true, mode: 0o700 })
         }
     }
 
@@ -128,7 +128,7 @@ class Configuration {
 
         // Ensure data directory exists before loading settings
         if (!existsSync(dataDir)) {
-            mkdirSync(dataDir, { recursive: true })
+            mkdirSync(dataDir, { recursive: true, mode: 0o700 })
         }
 
         // 2. Determine DB path (env only - not persisted)
@@ -191,6 +191,11 @@ export function getConfiguration(): Configuration {
         throw new Error('Configuration not initialized. Call createConfiguration() first.')
     }
     return _configuration
+}
+
+/** Reset singleton for test isolation. Production code must never call this. */
+export function _resetConfigurationForTesting(): void {
+    _configuration = null
 }
 
 // For compatibility - throws on access if not configured

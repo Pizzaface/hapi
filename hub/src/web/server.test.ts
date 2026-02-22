@@ -3,7 +3,7 @@ import { createWebApp } from './server'
 import { Store } from '../store'
 import { rmSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { createConfiguration } from '../configuration'
+import { createConfiguration, _resetConfigurationForTesting } from '../configuration'
 
 describe('Web Server Security Headers', () => {
     let store: Store
@@ -13,11 +13,12 @@ describe('Web Server Security Headers', () => {
     beforeAll(async () => {
         mkdirSync(testDir, { recursive: true })
         process.env.HAPI_HOME = testDir
-        // Initialize configuration
+        _resetConfigurationForTesting()
         await createConfiguration()
     })
 
     afterAll(() => {
+        _resetConfigurationForTesting()
         try {
             rmSync(testDir, { recursive: true, force: true })
         } catch {

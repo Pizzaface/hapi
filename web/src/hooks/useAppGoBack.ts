@@ -1,13 +1,20 @@
 import { useCallback } from 'react'
 import { useLocation, useNavigate, useRouter } from '@tanstack/react-router'
+import { useBackInterceptorOptional } from '@/lib/drawer-back-interceptor'
 
 export function useAppGoBack(): () => void {
     const navigate = useNavigate()
     const router = useRouter()
     const pathname = useLocation({ select: (location) => location.pathname })
     const search = useLocation({ select: (location) => location.search })
+    const interceptor = useBackInterceptorOptional()
 
     return useCallback(() => {
+        // Consult drawer back interceptor first — closes drawer if open
+        if (interceptor?.tryIntercept()) {
+            return
+        }
+
         // Use explicit path navigation for consistent behavior across all environments
         if (pathname === '/sessions/new') {
             navigate({ to: '/sessions' })
@@ -42,5 +49,5 @@ export function useAppGoBack(): () => void {
 
         // Fallback to history.back() for other cases
         router.history.back()
-    }, [navigate, pathname, router, search])
+    }, [navigate, pathname, router, search, interceptor])
 }

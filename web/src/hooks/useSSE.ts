@@ -54,7 +54,9 @@ export function useSSE(options: {
     token: string
     baseUrl: string
     subscription?: SSESubscription
+    activeSessionId?: string | null
     onEvent: (event: SyncEvent) => void
+    onActiveSessionRemoved?: (sessionId: string) => void
     onConnect?: () => void
     onDisconnect?: (reason: string) => void
     onError?: (error: unknown) => void
@@ -66,6 +68,8 @@ export function useSSE(options: {
     const onDisconnectRef = useRef(options.onDisconnect)
     const onErrorRef = useRef(options.onError)
     const onToastRef = useRef(options.onToast)
+    const onActiveSessionRemovedRef = useRef(options.onActiveSessionRemoved)
+    const activeSessionIdRef = useRef(options.activeSessionId ?? null)
     const eventSourceRef = useRef<EventSource | null>(null)
     const [subscriptionId, setSubscriptionId] = useState<string | null>(null)
 
@@ -88,6 +92,14 @@ export function useSSE(options: {
     useEffect(() => {
         onToastRef.current = options.onToast
     }, [options.onToast])
+
+    useEffect(() => {
+        onActiveSessionRemovedRef.current = options.onActiveSessionRemoved
+    }, [options.onActiveSessionRemoved])
+
+    useEffect(() => {
+        activeSessionIdRef.current = options.activeSessionId ?? null
+    }, [options.activeSessionId])
 
     const subscription = options.subscription ?? {}
 
@@ -120,6 +132,7 @@ export function useSSE(options: {
                         setSubscriptionId(nextId)
                     }
                 }
+                void queryClient.invalidateQueries({ queryKey: queryKeys.sessionBeadsAll })
             }
 
             if (event.type === 'toast') {
@@ -137,6 +150,9 @@ export function useSSE(options: {
                     if (event.type === 'session-removed') {
                         void queryClient.removeQueries({ queryKey: queryKeys.session(event.sessionId) })
                         clearMessageWindow(event.sessionId)
+                        if (activeSessionIdRef.current && event.sessionId === activeSessionIdRef.current) {
+                            onActiveSessionRemovedRef.current?.(event.sessionId)
+                        }
                     } else {
                         void queryClient.invalidateQueries({ queryKey: queryKeys.session(event.sessionId) })
                     }
@@ -145,6 +161,14 @@ export function useSSE(options: {
 
             if (event.type === 'machine-updated') {
                 void queryClient.invalidateQueries({ queryKey: queryKeys.machines })
+            }
+
+            if (event.type === 'beads-updated') {
+                void queryClient.invalidateQueries({ queryKey: queryKeys.sessionBeads(event.sessionId) })
+            }
+
+            if (event.type === 'team:updated' || event.type === 'team:deleted' || event.type === 'member-joined' || event.type === 'member-left') {
+                void queryClient.invalidateQueries({ queryKey: queryKeys.teams })
             }
 
             onEventRef.current(event)

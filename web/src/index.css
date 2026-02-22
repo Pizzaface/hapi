@@ -43,6 +43,13 @@
     --app-badge-error-text: #b91c1c;
     --app-badge-error-border: rgba(239, 68, 68, 0.3);
 
+    /* Provider colors (light) — avoid green/blue (used by status dots) */
+    --app-provider-claude: #92400e;
+    --app-provider-codex: #0f766e;
+    --app-provider-gemini: #be185d;
+    --app-provider-opencode: #7c3aed;
+    --app-provider-unknown: var(--app-hint);
+
     --app-font-scale: 1;
 }
 
@@ -87,6 +94,13 @@
     --app-badge-error-bg: rgba(248, 113, 113, 0.2);
     --app-badge-error-text: #fca5a5;
     --app-badge-error-border: rgba(248, 113, 113, 0.35);
+
+    /* Provider colors (dark) — avoid green/blue (used by status dots) */
+    --app-provider-claude: #c4956a;
+    --app-provider-codex: #5eadb4;
+    --app-provider-gemini: #d4748f;
+    --app-provider-opencode: #a78bfa;
+    --app-provider-unknown: var(--app-hint);
 }
 
 html {
@@ -130,6 +144,11 @@ body {
     .desktop-scrollbar-left > * {
         direction: ltr;
     }
+}
+
+/* Image zoom modal: allow pinch-to-zoom by overriding global touch-action */
+.image-zoom-wrapper {
+    touch-action: none;
 }
 
 /* Markdown styles */
@@ -217,6 +236,21 @@ html[data-theme="dark"] .shiki span {
   animation: slide-up 0.3s ease-out;
 }
 
+@keyframes slide-down {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-down {
+  animation: slide-down 0.3s ease-out;
+}
+
 @keyframes menu-pop {
   from {
     opacity: 0;
@@ -263,6 +297,12 @@ html[data-theme="dark"] .shiki span {
 
 .animate-bounce-in {
   animation: bounce-in 0.3s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-slide-down {
+    animation: none;
+  }
 }
 
 /* ReactQueryDevtools button - move to middle-right to avoid blocking UI */

@@ -8,6 +8,7 @@ import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { LazyRainbowText } from '@/components/LazyRainbowText'
 import { MessageStatusIndicator } from '@/components/AssistantChat/messages/MessageStatusIndicator'
 import { ToolCard } from '@/components/ToolCard/ToolCard'
+import { ChatImage } from '@/components/ui/ChatImage'
 import { useHappyChatContext } from '@/components/AssistantChat/context'
 import { CliOutputBlock } from '@/components/CliOutputBlock'
 
@@ -104,6 +105,15 @@ function HappyNestedBlockList(props: {
                                     <span>{presentation.text}</span>
                                 </span>
                             </div>
+                        </div>
+                    )
+                }
+
+                if (block.kind === 'agent-image') {
+                    const dataUrl = `data:${block.mediaType};base64,${block.base64}`
+                    return (
+                        <div key={`image:${block.id}`} className="px-1 my-2">
+                            <ChatImage src={dataUrl} alt="Image" />
                         </div>
                     )
                 }

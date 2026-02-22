@@ -59,7 +59,7 @@ See `src/ui/doctor.ts`.
 
 ### Other
 
-- `hapi mcp` - Start MCP stdio bridge. See `src/codex/happyMcpStdioBridge.ts`.
+- `hapi mcp` - Start MCP stdio bridge (forwards `change_title` and `spawn_session` tools). See `src/codex/happyMcpStdioBridge.ts`.
 - `hapi hub` - Start the bundled hub (single binary workflow).
 - `hapi server` - Alias for `hapi hub`.
 

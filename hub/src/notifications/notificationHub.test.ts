@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import type { Session, SyncEvent, SyncEventListener, SyncEngine } from '../sync/syncEngine'
+import type { StoredUserPreferences } from '../store/userPreferences'
 import type { NotificationChannel } from './notificationTypes'
 import { NotificationHub } from './notificationHub'
 
@@ -29,6 +30,31 @@ class FakeSyncEngine {
     }
 }
 
+type PartialPrefs = Pick<StoredUserPreferences, 'readyAnnouncements' | 'permissionNotifications'>
+
+class FakePreferencesStore {
+    private prefs: PartialPrefs
+
+    constructor(prefs: PartialPrefs = { readyAnnouncements: true, permissionNotifications: true }) {
+        this.prefs = prefs
+    }
+
+    get(_namespace: string): StoredUserPreferences {
+        return {
+            namespace: _namespace,
+            readyAnnouncements: this.prefs.readyAnnouncements,
+            permissionNotifications: this.prefs.permissionNotifications,
+            errorNotifications: true,
+            teamGroupStyle: 'card',
+            updatedAt: 0
+        }
+    }
+
+    setPrefs(prefs: PartialPrefs): void {
+        this.prefs = prefs
+    }
+}
+
 class StubChannel implements NotificationChannel {
     readonly readySessions: Session[] = []
     readonly permissionSessions: Session[] = []
@@ -55,6 +81,7 @@ function createSession(overrides: Partial<Session> = {}): Session {
         metadataVersion: 0,
         agentState: null,
         agentStateVersion: 0,
+        sortOrder: 'a0',
         thinking: false,
         thinkingAt: 0,
         ...overrides
@@ -150,6 +177,107 @@ describe('NotificationHub', () => {
         engine.emit(readyEvent)
         await sleep(5)
         expect(channel.readySessions).toHaveLength(2)
+
+        hub.stop()
+    })
+
+    it('skips ready notifications when readyAnnouncements preference is false', async () => {
+        const engine = new FakeSyncEngine()
+        const channel = new StubChannel()
+        const prefsStore = new FakePreferencesStore({ readyAnnouncements: false, permissionNotifications: true })
+        const hub = new NotificationHub(engine as unknown as SyncEngine, [channel], {
+            permissionDebounceMs: 1,
+            readyCooldownMs: 1,
+            preferencesStore: prefsStore as any
+        })
+
+        const session = createSession()
+        engine.setSession(session)
+
+        const readyEvent: SyncEvent = {
+            type: 'message-received',
+            sessionId: session.id,
+            message: {
+                id: 'message-1',
+                seq: 1,
+                localId: null,
+                createdAt: 0,
+                content: {
+                    role: 'agent',
+                    content: {
+                        id: 'event-1',
+                        type: 'event',
+                        data: { type: 'ready' }
+                    }
+                }
+            }
+        }
+
+        engine.emit(readyEvent)
+        await sleep(10)
+        expect(channel.readySessions).toHaveLength(0)
+
+        hub.stop()
+    })
+
+    it('skips permission notifications when permissionNotifications preference is false', async () => {
+        const engine = new FakeSyncEngine()
+        const channel = new StubChannel()
+        const prefsStore = new FakePreferencesStore({ readyAnnouncements: true, permissionNotifications: false })
+        const hub = new NotificationHub(engine as unknown as SyncEngine, [channel], {
+            permissionDebounceMs: 5,
+            readyCooldownMs: 5,
+            preferencesStore: prefsStore as any
+        })
+
+        const session = createSession({
+            agentState: {
+                requests: {
+                    req1: { tool: 'Edit', arguments: {}, createdAt: 1 }
+                }
+            }
+        })
+
+        engine.setSession(session)
+        engine.emit({ type: 'session-updated', sessionId: session.id })
+        await sleep(25)
+
+        expect(channel.permissionSessions).toHaveLength(0)
+
+        hub.stop()
+    })
+
+    it('does not track lastKnownRequests when permissionNotifications is false, so re-enable detects pending', async () => {
+        const engine = new FakeSyncEngine()
+        const channel = new StubChannel()
+        const prefsStore = new FakePreferencesStore({ readyAnnouncements: true, permissionNotifications: false })
+        const hub = new NotificationHub(engine as unknown as SyncEngine, [channel], {
+            permissionDebounceMs: 5,
+            readyCooldownMs: 5,
+            preferencesStore: prefsStore as any
+        })
+
+        const session = createSession({
+            agentState: {
+                requests: {
+                    req1: { tool: 'Edit', arguments: {}, createdAt: 1 }
+                }
+            }
+        })
+
+        // With notifications off, emit session update — no notification sent, no tracking
+        engine.setSession(session)
+        engine.emit({ type: 'session-updated', sessionId: session.id })
+        await sleep(25)
+        expect(channel.permissionSessions).toHaveLength(0)
+
+        // Re-enable permission notifications
+        prefsStore.setPrefs({ readyAnnouncements: true, permissionNotifications: true })
+
+        // Same session update (no new requests) — but since we never tracked, req1 appears new
+        engine.emit({ type: 'session-updated', sessionId: session.id })
+        await sleep(25)
+        expect(channel.permissionSessions).toHaveLength(1)
 
         hub.stop()
     })

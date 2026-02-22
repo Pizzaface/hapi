@@ -16,6 +16,7 @@ import { RpcHandlerManager } from './rpc/RpcHandlerManager'
 import { registerCommonHandlers } from '../modules/common/registerCommonHandlers'
 import type { SpawnSessionOptions, SpawnSessionResult } from '../modules/common/rpcTypes'
 import { applyVersionedAck } from './versionedUpdate'
+import { discoverAgents, type DiscoveredAgent } from '@/agent/agentDiscovery'
 
 interface ServerToRunnerEvents {
     update: (data: Update) => void
@@ -72,6 +73,14 @@ interface GitBranchesRequest {
 
 interface GitBranchesResponse {
     branches: string[]
+}
+
+interface ListAgentsRequest {
+    directory?: string
+}
+
+interface ListAgentsResponse {
+    agents: DiscoveredAgent[]
 }
 
 const execFileAsync = promisify(execFile)
@@ -221,6 +230,14 @@ export class ApiMachineClient {
             }
 
             return { message: 'Session stopped' }
+        })
+
+        this.rpcHandlerManager.registerHandler<ListAgentsRequest, ListAgentsResponse>('list-agents', async (params) => {
+            const directory = typeof params?.directory === 'string' ? params.directory.trim() : ''
+            const agents = await discoverAgents({
+                directory: directory || undefined
+            })
+            return { agents }
         })
 
         this.rpcHandlerManager.registerHandler('stop-runner', () => {

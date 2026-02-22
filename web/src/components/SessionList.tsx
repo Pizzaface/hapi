@@ -1,24 +1,135 @@
-import { useEffect, useMemo, useRef, useState, type WheelEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject, type WheelEvent } from 'react'
+import {
+    DndContext,
+    KeyboardSensor,
+    MouseSensor,
+    TouchSensor,
+    closestCenter,
+    useSensor,
+    useSensors,
+    type DragEndEvent,
+    type DragStartEvent,
+} from '@dnd-kit/core'
+import {
+    SortableContext,
+    arrayMove,
+    sortableKeyboardCoordinates,
+    useSortable,
+    verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { generateKeyBetween } from 'fractional-indexing'
 import { useSwipeable, type SwipeEventData } from 'react-swipeable'
-import type { SessionSummary } from '@/types/api'
+import type {
+    ClearInactiveSessionsOlderThan,
+    SessionSummary,
+    SessionsResponse,
+    TeamSummary
+} from '@/types/api'
 import type { ApiClient } from '@/api/client'
 import { useLongPress } from '@/hooks/useLongPress'
 import { usePlatform } from '@/hooks/usePlatform'
-import { useSessionActions } from '@/hooks/mutations/useSessionActions'
+import { useClearInactiveSessions } from '@/hooks/mutations/useClearInactiveSessions'
+import {
+    useSessionActions,
+    useSessionSortOrderMutation,
+    type SessionSortOrderUpdate
+} from '@/hooks/mutations/useSessionActions'
+import { ClearInactiveDialog } from '@/components/ClearInactiveDialog'
 import { SessionActionMenu } from '@/components/SessionActionMenu'
 import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { clearMessageWindow } from '@/lib/message-window-store'
+import { deriveSessionStatus, deriveTeamAggregateStatus } from '@hapi/protocol'
+import { resolveProvider } from '@/lib/providerTheme'
+import { queryKeys } from '@/lib/query-keys'
+import { getSessionStatusDisplay } from '@/lib/sessionStatusDisplay'
+import { getTeamAggregateStatusDisplay } from '@/lib/teamStatusDisplay'
 import { useTranslation } from '@/lib/use-translation'
+import { ProviderIcon } from './ProviderIcon'
 
-type SessionGroup = {
+const SESSION_READ_HISTORY_KEY = 'hapi:sessionReadHistory'
+const COLLAPSE_OVERRIDES_KEY = 'hapi:collapseOverrides'
+const DAY_MS = 24 * 60 * 60 * 1000
+
+export type ClearInactiveCounts = {
+    '7d': number
+    '30d': number
+    all: number
+}
+
+function getClearInactiveCutoff(now: number, olderThan: Exclude<ClearInactiveSessionsOlderThan, 'all'>): number {
+    return olderThan === '7d'
+        ? now - (7 * DAY_MS)
+        : now - (30 * DAY_MS)
+}
+
+export function getClearInactiveCounts(sessions: SessionSummary[], now: number = Date.now()): ClearInactiveCounts {
+    let all = 0
+    let sevenDays = 0
+    let thirtyDays = 0
+    const cutoff7d = getClearInactiveCutoff(now, '7d')
+    const cutoff30d = getClearInactiveCutoff(now, '30d')
+
+    for (const session of sessions) {
+        if (session.active) {
+            continue
+        }
+
+        all += 1
+
+        if (session.updatedAt < cutoff7d) {
+            sevenDays += 1
+        }
+
+        if (session.updatedAt < cutoff30d) {
+            thirtyDays += 1
+        }
+    }
+
+    return {
+        '7d': sevenDays,
+        '30d': thirtyDays,
+        all
+    }
+}
+
+type SessionGroupBase = {
     key: string
-    directory: string
-    machineId: string | null
     displayName: string
     sessions: SessionSummary[]
+    minSortOrder: string | null
     latestUpdatedAt: number
+    latestReadAt: number
     hasActiveSession: boolean
 }
+
+export type TeamGroup = SessionGroupBase & {
+    type: 'team'
+    teamId: string
+    teamName: string
+    teamColor: string | null
+    teamPersistent: boolean
+    teamSortOrder: string | null
+}
+
+export type DirectoryGroup = SessionGroupBase & {
+    type: 'directory'
+    directory: string
+    machineId: string | null
+}
+
+export type SessionGroup = TeamGroup | DirectoryGroup
+
+export type SessionReadHistory = Record<string, number>
 
 function getGroupDisplayName(directory: string): string {
     if (directory === 'Other') return directory
@@ -26,6 +137,96 @@ function getGroupDisplayName(directory: string): string {
     if (parts.length === 0) return directory
     if (parts.length === 1) return parts[0]
     return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`
+}
+
+function normalizeTimestamp(value: number): number {
+    return value < 1_000_000_000_000 ? value * 1000 : value
+}
+
+type SessionWithSortOrder = SessionSummary & {
+    sortOrder?: string | null
+    sort_order?: string | null
+}
+
+function parseSortOrderValue(value: unknown): string | null {
+    if (typeof value !== 'string' || value.length === 0) return null
+    return value
+}
+
+export function getSessionSortOrder(session: SessionSummary): string | null {
+    const sessionWithSortOrder = session as SessionWithSortOrder
+    const direct = parseSortOrderValue(sessionWithSortOrder.sortOrder)
+    if (direct !== null) return direct
+    return parseSortOrderValue(sessionWithSortOrder.sort_order)
+}
+
+export function setSessionSortOrderValue(session: SessionSummary, sortOrder: string | null): SessionSummary {
+    return {
+        ...(session as SessionWithSortOrder),
+        sortOrder,
+        sort_order: sortOrder
+    } as SessionSummary
+}
+
+export function loadSessionReadHistory(): SessionReadHistory {
+    if (typeof window === 'undefined') return {}
+
+    try {
+        const raw = localStorage.getItem(SESSION_READ_HISTORY_KEY)
+        if (!raw) return {}
+        const parsed = JSON.parse(raw) as Record<string, unknown>
+        const entries = Object.entries(parsed)
+            .filter(([, value]) => typeof value === 'number' && Number.isFinite(value) && value > 0)
+            .map(([key, value]) => [key, value as number])
+        return Object.fromEntries(entries)
+    } catch {
+        return {}
+    }
+}
+
+export function saveSessionReadHistory(history: SessionReadHistory): void {
+    if (typeof window === 'undefined') return
+
+    try {
+        localStorage.setItem(SESSION_READ_HISTORY_KEY, JSON.stringify(history))
+    } catch {
+        // best-effort
+    }
+}
+
+export function pruneSessionReadHistory(
+    history: SessionReadHistory,
+    sessionIds: Set<string>
+): SessionReadHistory {
+    let changed = false
+    const next: SessionReadHistory = {}
+
+    for (const [sessionId, readAt] of Object.entries(history)) {
+        if (!sessionIds.has(sessionId)) {
+            changed = true
+            continue
+        }
+        next[sessionId] = readAt
+    }
+
+    return changed ? next : history
+}
+
+export function sortSessionsBySortOrder(
+    sessions: SessionSummary[],
+): SessionSummary[] {
+    return [...sessions].sort((a, b) => {
+        const sortOrderA = getSessionSortOrder(a)
+        const sortOrderB = getSessionSortOrder(b)
+
+        if (sortOrderA === null && sortOrderB !== null) return 1
+        if (sortOrderA !== null && sortOrderB === null) return -1
+        if (sortOrderA !== null && sortOrderB !== null && sortOrderA !== sortOrderB) {
+            return sortOrderA < sortOrderB ? -1 : 1
+        }
+
+        return a.id.localeCompare(b.id)
+    })
 }
 
 function getSessionDirectory(session: SessionSummary): string {
@@ -40,55 +241,260 @@ function getSessionGroupKey(directory: string, machineId: string | null): string
     return `${machineId ?? 'unknown-machine'}::${directory}`
 }
 
-function groupSessionsByDirectory(sessions: SessionSummary[]): SessionGroup[] {
-    const groups = new Map<string, { directory: string; machineId: string | null; sessions: SessionSummary[] }>()
+function computeGroupStats(sessions: SessionSummary[], readHistory: SessionReadHistory): {
+    minSortOrder: string | null
+    latestUpdatedAt: number
+    latestReadAt: number
+    hasActiveSession: boolean
+} {
+    let minSortOrder: string | null = null
+    let latestUpdatedAt = -Infinity
+    let latestReadAt = -Infinity
+    let hasActiveSession = false
 
-    sessions.forEach(session => {
-        const directory = getSessionDirectory(session)
-        const machineId = getSessionMachineId(session)
-        const key = getSessionGroupKey(directory, machineId)
-
-        if (!groups.has(key)) {
-            groups.set(key, {
-                directory,
-                machineId,
-                sessions: []
-            })
+    for (const session of sessions) {
+        const so = getSessionSortOrder(session)
+        if (so !== null && (minSortOrder === null || so < minSortOrder)) {
+            minSortOrder = so
         }
-        groups.get(key)!.sessions.push(session)
-    })
+        if (session.updatedAt > latestUpdatedAt) {
+            latestUpdatedAt = session.updatedAt
+        }
+        const readAt = readHistory[session.id]
+        if (readAt !== undefined && readAt > latestReadAt) {
+            latestReadAt = readAt
+        }
+        if (session.active) {
+            hasActiveSession = true
+        }
+    }
 
-    return Array.from(groups.entries())
+    return { minSortOrder, latestUpdatedAt, latestReadAt, hasActiveSession }
+}
+
+export function groupSessions(
+    sessions: SessionSummary[],
+    teams: TeamSummary[],
+    readHistory: SessionReadHistory,
+): SessionGroup[] {
+    // Build sessionId → teamId lookup
+    const sessionTeamMap = new Map<string, string>()
+    const teamById = new Map<string, TeamSummary>()
+    for (const team of teams) {
+        teamById.set(team.id, team)
+        for (const sessionId of team.memberSessionIds) {
+            sessionTeamMap.set(sessionId, team.id)
+        }
+    }
+
+    // Bucket sessions
+    const teamBuckets = new Map<string, SessionSummary[]>()
+    const dirBuckets = new Map<string, { directory: string; machineId: string | null; sessions: SessionSummary[] }>()
+
+    for (const session of sessions) {
+        const teamId = sessionTeamMap.get(session.id)
+        if (teamId) {
+            if (!teamBuckets.has(teamId)) {
+                teamBuckets.set(teamId, [])
+            }
+            teamBuckets.get(teamId)!.push(session)
+        } else {
+            const directory = getSessionDirectory(session)
+            const machineId = getSessionMachineId(session)
+            const key = getSessionGroupKey(directory, machineId)
+            if (!dirBuckets.has(key)) {
+                dirBuckets.set(key, { directory, machineId, sessions: [] })
+            }
+            dirBuckets.get(key)!.sessions.push(session)
+        }
+    }
+
+    const result: SessionGroup[] = []
+
+    // Team groups — sorted by team sort_order, then name
+    const teamEntries = Array.from(teamBuckets.entries())
+        .map(([teamId, teamSessions]) => {
+            const team = teamById.get(teamId)!
+            return { teamId, team, sessions: teamSessions }
+        })
+        .sort((a, b) => {
+            if (a.team.sortOrder !== null && b.team.sortOrder !== null) {
+                return a.team.sortOrder < b.team.sortOrder ? -1 : a.team.sortOrder > b.team.sortOrder ? 1 : 0
+            }
+            if (a.team.sortOrder !== null) return -1
+            if (b.team.sortOrder !== null) return 1
+            return a.team.name.localeCompare(b.team.name)
+        })
+
+    for (const { teamId, team, sessions: teamSessions } of teamEntries) {
+        const sorted = sortSessionsBySortOrder(teamSessions)
+        const stats = computeGroupStats(sorted, readHistory)
+        result.push({
+            type: 'team',
+            key: `team:${teamId}`,
+            teamId,
+            teamName: team.name,
+            teamColor: team.color,
+            teamPersistent: team.persistent,
+            teamSortOrder: team.sortOrder,
+            displayName: team.name,
+            sessions: sorted,
+            ...stats,
+        })
+    }
+
+    // Directory groups — sorted alphabetically, "Other" last
+    const dirEntries = Array.from(dirBuckets.entries())
         .map(([key, group]) => {
-            const sortedSessions = [...group.sessions].sort((a, b) => {
-                const rankA = a.active ? (a.pendingRequestsCount > 0 ? 0 : 1) : 2
-                const rankB = b.active ? (b.pendingRequestsCount > 0 ? 0 : 1) : 2
-                if (rankA !== rankB) return rankA - rankB
-                return b.updatedAt - a.updatedAt
-            })
-            const latestUpdatedAt = group.sessions.reduce(
-                (max, s) => (s.updatedAt > max ? s.updatedAt : max),
-                -Infinity
-            )
-            const hasActiveSession = group.sessions.some(s => s.active)
-            const displayName = getGroupDisplayName(group.directory)
-
+            const sorted = sortSessionsBySortOrder(group.sessions)
+            const stats = computeGroupStats(sorted, readHistory)
             return {
+                type: 'directory' as const,
                 key,
                 directory: group.directory,
                 machineId: group.machineId,
-                displayName,
-                sessions: sortedSessions,
-                latestUpdatedAt,
-                hasActiveSession
+                displayName: getGroupDisplayName(group.directory),
+                sessions: sorted,
+                ...stats,
             }
         })
         .sort((a, b) => {
-            if (a.hasActiveSession !== b.hasActiveSession) {
-                return a.hasActiveSession ? -1 : 1
-            }
-            return b.latestUpdatedAt - a.latestUpdatedAt
+            const aIsOther = a.directory === 'Other'
+            const bIsOther = b.directory === 'Other'
+            if (aIsOther !== bIsOther) return aIsOther ? 1 : -1
+
+            const dirCompare = a.directory.localeCompare(b.directory)
+            if (dirCompare !== 0) return dirCompare
+
+            return (a.machineId ?? '').localeCompare(b.machineId ?? '')
         })
+
+    result.push(...dirEntries)
+    return result
+}
+
+export function buildSortOrderUpdatesForReorder(
+    reorderedScope: SessionSummary[],
+    movedSessionId: string
+): SessionSortOrderUpdate[] {
+    const movedIndex = reorderedScope.findIndex(session => session.id === movedSessionId)
+    if (movedIndex < 0) return []
+
+    const movedSession = reorderedScope[movedIndex]
+    if (!movedSession) return []
+
+    const previousSortOrder = movedIndex > 0
+        ? getSessionSortOrder(reorderedScope[movedIndex - 1]!)
+        : null
+    const nextSortOrder = movedIndex < reorderedScope.length - 1
+        ? getSessionSortOrder(reorderedScope[movedIndex + 1]!)
+        : null
+
+    const generated = (() => {
+        try {
+            return generateKeyBetween(previousSortOrder, nextSortOrder)
+        } catch {
+            try {
+                return generateKeyBetween(previousSortOrder, null)
+            } catch {
+                try {
+                    return generateKeyBetween(null, nextSortOrder)
+                } catch {
+                    return generateKeyBetween(null, null)
+                }
+            }
+        }
+    })()
+    if (generated === getSessionSortOrder(movedSession)) {
+        return []
+    }
+
+    return [{
+        sessionId: movedSession.id,
+        sortOrder: generated
+    }]
+}
+
+export function applySortOrderUpdatesToSessions(
+    sessions: SessionSummary[],
+    updates: SessionSortOrderUpdate[]
+): SessionSummary[] {
+    if (updates.length === 0) return sessions
+    const updateMap = new Map(updates.map(update => [update.sessionId, update.sortOrder]))
+    let changed = false
+    const nextSessions = sessions.map(session => {
+        if (!updateMap.has(session.id)) return session
+        changed = true
+        return setSessionSortOrderValue(session, updateMap.get(session.id)!)
+    })
+    return changed ? nextSessions : sessions
+}
+
+export function applyOptimisticSortOrderUpdates(
+    queryClient: QueryClient,
+    updates: SessionSortOrderUpdate[]
+): () => void {
+    if (updates.length === 0) {
+        return () => {
+            // no-op
+        }
+    }
+
+    const previous = queryClient.getQueryData<SessionsResponse>(queryKeys.sessions)
+    queryClient.setQueryData<SessionsResponse>(queryKeys.sessions, current => {
+        if (!current) return current
+        return {
+            ...current,
+            sessions: applySortOrderUpdatesToSessions(current.sessions, updates)
+        }
+    })
+
+    return () => {
+        if (previous === undefined) return
+        queryClient.setQueryData(queryKeys.sessions, previous)
+    }
+}
+
+export function patchGroupsVisuals(
+    frozenGroups: SessionGroup[],
+    latestSessions: SessionSummary[]
+): SessionGroup[] {
+    const sessionMap = new Map(latestSessions.map(s => [s.id, s]))
+    let anyChanged = false
+
+    const patched = frozenGroups.map(group => {
+        const patchedSessions: SessionSummary[] = []
+        let groupChanged = false
+        for (const frozenSession of group.sessions) {
+            const latest = sessionMap.get(frozenSession.id)
+            if (!latest) {
+                groupChanged = true
+                continue
+            }
+            if (latest !== frozenSession) groupChanged = true
+            patchedSessions.push(latest)
+        }
+        if (!groupChanged) return group
+        anyChanged = true
+        const minSortOrder = patchedSessions.reduce<string | null>((min, session) => {
+            const sortOrder = getSessionSortOrder(session)
+            if (sortOrder === null) return min
+            if (min === null || sortOrder < min) return sortOrder
+            return min
+        }, null)
+        return {
+            ...group,
+            sessions: patchedSessions,
+            minSortOrder,
+            hasActiveSession: patchedSessions.some(s => s.active)
+        }
+    }).filter(group => group.sessions.length > 0)
+
+    return anyChanged || patched.length !== frozenGroups.length ? patched : frozenGroups
+}
+
+export function getSessionIdHash(sessions: SessionSummary[]): string {
+    return sessions.map(s => s.id).sort().join('\0')
 }
 
 function PlusIcon(props: { className?: string }) {
@@ -153,6 +559,25 @@ function BulbIcon(props: { className?: string }) {
     )
 }
 
+function CheckIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <polyline points="20 6 9 17 4 12" />
+        </svg>
+    )
+}
+
 function ChevronIcon(props: { className?: string; collapsed?: boolean }) {
     return (
         <svg
@@ -172,7 +597,54 @@ function ChevronIcon(props: { className?: string; collapsed?: boolean }) {
     )
 }
 
-function getSessionTitle(session: SessionSummary): string {
+function GripVerticalIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <circle cx="9" cy="5" r="1" />
+            <circle cx="9" cy="12" r="1" />
+            <circle cx="9" cy="19" r="1" />
+            <circle cx="15" cy="5" r="1" />
+            <circle cx="15" cy="12" r="1" />
+            <circle cx="15" cy="19" r="1" />
+        </svg>
+    )
+}
+
+function DoorOpenIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <path d="M13 4h3a2 2 0 0 1 2 2v14" />
+            <path d="M2 20h3" />
+            <path d="M13 20h9" />
+            <path d="M10 12v.01" />
+            <path d="M13 4.562v16.157a1 1 0 0 1-1.242.97L5 20V5.562a2 2 0 0 1 1.515-1.94l4-1A2 2 0 0 1 13 4.561Z" />
+        </svg>
+    )
+}
+
+export function getSessionTitle(session: SessionSummary): string {
     if (session.metadata?.name) {
         return session.metadata.name
     }
@@ -192,14 +664,8 @@ function getTodoProgress(session: SessionSummary): { completed: number; total: n
     return session.todoProgress
 }
 
-function getAgentLabel(session: SessionSummary): string {
-    const flavor = session.metadata?.flavor?.trim()
-    if (flavor) return flavor
-    return 'unknown'
-}
-
-function formatRelativeTime(value: number, t: (key: string, params?: Record<string, string | number>) => string): string | null {
-    const ms = value < 1_000_000_000_000 ? value * 1000 : value
+export function formatRelativeTime(value: number, t: (key: string, params?: Record<string, string | number>) => string): string | null {
+    const ms = normalizeTimestamp(value)
     if (!Number.isFinite(ms)) return null
     const delta = Date.now() - ms
     if (delta < 60_000) return t('session.time.justNow')
@@ -212,15 +678,78 @@ function formatRelativeTime(value: number, t: (key: string, params?: Record<stri
     return new Date(ms).toLocaleDateString()
 }
 
+export function getUnreadLabelClass(thinking: boolean): string {
+    return thinking
+        ? 'text-[var(--app-hint)] opacity-70'
+        : 'text-[var(--app-badge-warning-text)]'
+}
+
+function loadCollapseOverrides(): Map<string, boolean> {
+    if (typeof window === 'undefined') return new Map()
+    try {
+        const raw = localStorage.getItem(COLLAPSE_OVERRIDES_KEY)
+        if (!raw) return new Map()
+        const parsed = JSON.parse(raw) as Record<string, boolean>
+        return new Map(Object.entries(parsed))
+    } catch {
+        return new Map()
+    }
+}
+
+function saveCollapseOverrides(overrides: Map<string, boolean>): void {
+    if (typeof window === 'undefined') return
+    try {
+        if (overrides.size === 0) {
+            localStorage.removeItem(COLLAPSE_OVERRIDES_KEY)
+        } else {
+            localStorage.setItem(COLLAPSE_OVERRIDES_KEY, JSON.stringify(Object.fromEntries(overrides)))
+        }
+    } catch {
+        // best-effort
+    }
+}
+
 function SessionItem(props: {
     session: SessionSummary
     onSelect: (sessionId: string) => void
+    onToggleSelected: (sessionId: string) => void
     showPath?: boolean
+    projectLabel?: string
+    parentLabel?: string
+    indentLevel?: number
     api: ApiClient | null
     selected?: boolean
+    selectionMode: boolean
+    selectedForBulk: boolean
+    unread?: boolean
+    dndEnabled: boolean
+    dragInstructionsId: string
+    dragHandleBindings: Pick<ReturnType<typeof useSortable>, 'attributes' | 'listeners' | 'setActivatorNodeRef'>
+    dragging: boolean
+    dropTarget: boolean
+    dragInProgress: boolean
 }) {
     const { t } = useTranslation()
-    const { session: s, onSelect, showPath = true, api, selected = false } = props
+    const {
+        session: s,
+        onSelect,
+        onToggleSelected,
+        showPath = true,
+        projectLabel,
+        parentLabel,
+        indentLevel = 0,
+        api,
+        selected = false,
+        selectionMode,
+        selectedForBulk,
+        unread = false,
+        dndEnabled,
+        dragInstructionsId,
+        dragHandleBindings,
+        dragging,
+        dropTarget,
+        dragInProgress
+    } = props
     const { haptic, isTouch } = usePlatform()
     const SWIPE_MAX_PX = 112
     const SWIPE_TRIGGER_PX = 72
@@ -242,6 +771,7 @@ function SessionItem(props: {
         return /mac/i.test(platform)
     }, [])
     const enableTrackpadSwipe = !isTouch && isMacPlatform
+    const disableGestureActions = dragInProgress
     const showSwipeUi = isTouch || enableTrackpadSwipe
     const showSwipeAction = showSwipeUi && (isSwiping || swipeOffset < 0)
 
@@ -253,16 +783,26 @@ function SessionItem(props: {
 
     const longPressHandlers = useLongPress({
         onLongPress: (point) => {
+            if (disableGestureActions) return
+            if (selectionMode) {
+                onToggleSelected(s.id)
+                return
+            }
             haptic.impact('medium')
             setMenuAnchorPoint(point)
             setMenuOpen(true)
         },
         onClick: () => {
-            if (!menuOpen) {
-                onSelect(s.id)
+            if (disableGestureActions) return
+            if (menuOpen) return
+            if (selectionMode) {
+                onToggleSelected(s.id)
+                return
             }
+            onSelect(s.id)
         },
-        threshold: 500
+        threshold: 500,
+        disabled: disableGestureActions
     })
 
     const clearTrackpadSwipeEndTimer = () => {
@@ -328,7 +868,7 @@ function SessionItem(props: {
     }
 
     const handleTrackpadWheel = (event: WheelEvent<HTMLDivElement>) => {
-        if (!enableTrackpadSwipe || isPending) return
+        if (!enableTrackpadSwipe || isPending || disableGestureActions) return
         if (event.deltaMode !== 0) return
         if (Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return
 
@@ -353,18 +893,22 @@ function SessionItem(props: {
     }, [])
 
     const sessionName = getSessionTitle(s)
-    const statusDotClass = s.active
-        ? (s.thinking ? 'bg-[#007AFF]' : 'bg-[var(--app-badge-success-text)]')
-        : 'bg-[var(--app-hint)]'
+    const sessionStatus = deriveSessionStatus(s)
+    const statusDisplay = getSessionStatusDisplay(sessionStatus)
+    const unreadLabelClass = getUnreadLabelClass(s.thinking)
+    const highlighted = selected || (selectionMode && selectedForBulk)
+    const providerDisplay = resolveProvider(s.metadata?.flavor)
+
     return (
         <>
             <div
-                {...(isTouch ? swipeHandlers : {})}
-                onWheel={enableTrackpadSwipe ? handleTrackpadWheel : undefined}
-                className="relative isolate overflow-hidden"
-                style={{ touchAction: 'pan-y' }}
+                data-session-id={s.id}
+                {...(isTouch && !selectionMode && !disableGestureActions ? swipeHandlers : {})}
+                onWheel={enableTrackpadSwipe && !selectionMode && !disableGestureActions ? handleTrackpadWheel : undefined}
+                className="relative isolate overflow-hidden group"
+                style={{ touchAction: 'pan-y', paddingLeft: indentLevel > 0 ? `${indentLevel * 1.5}rem` : undefined }}
             >
-                {showSwipeUi ? (
+                {showSwipeUi && !selectionMode && !disableGestureActions ? (
                     <div
                         className="absolute inset-y-0 right-0 -z-10 flex w-28 items-center justify-center bg-red-500/85 transition-opacity duration-100 pointer-events-none"
                         style={{ opacity: showSwipeAction ? 1 : 0 }}
@@ -374,8 +918,11 @@ function SessionItem(props: {
                         </span>
                     </div>
                 ) : null}
+                {dropTarget ? (
+                    <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-0.5 bg-[var(--app-link)]" />
+                ) : null}
                 <div
-                    className={`session-list-item relative z-10 flex w-full select-none ${selected ? 'bg-[var(--app-secondary-bg)] border-l-2 border-[var(--app-link)]' : 'bg-[var(--app-bg)]'}`}
+                    className={`session-list-item relative z-10 flex w-full select-none ${highlighted ? 'bg-[var(--app-secondary-bg)] border-l-2 border-l-[var(--app-link)]' : 'bg-[var(--app-bg)]'} ${dragging ? 'opacity-95 ring-2 ring-[var(--app-link)] shadow-[0_4px_12px_rgba(0,0,0,0.15)]' : ''}`}
                     style={{
                         WebkitTouchCallout: 'none',
                         transform: showSwipeUi && swipeOffset !== 0 ? `translateX(${swipeOffset}px)` : undefined,
@@ -384,25 +931,63 @@ function SessionItem(props: {
                 >
                     <button
                         type="button"
+                        ref={dragHandleBindings.setActivatorNodeRef}
+                        {...dragHandleBindings.attributes}
+                        {...dragHandleBindings.listeners}
+                        disabled={!dndEnabled}
+                        data-drag-handle={s.id}
+                        className={`inline-flex w-9 shrink-0 self-stretch items-center justify-center border-r text-[var(--app-hint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] ${dndEnabled ? 'cursor-grab active:cursor-grabbing hover:text-[var(--app-fg)]' : 'cursor-not-allowed opacity-50'}`}
+                        style={{ borderColor: `var(${providerDisplay.colorVar})` }}
+                        aria-label={dndEnabled
+                            ? t('session.dragHandle.label', { name: sessionName })
+                            : t('session.dragHandle.disabled')}
+                        aria-describedby={dragInstructionsId}
+                        title={dndEnabled
+                            ? t('session.dragHandle.label', { name: sessionName })
+                            : t('session.dragHandle.disabled')}
+                    >
+                        <GripVerticalIcon className="h-4 w-4" />
+                    </button>
+                    <button
+                        type="button"
                         {...longPressHandlers}
-                        className="flex-1 flex flex-col gap-1.5 px-3 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
+                        className="flex-1 min-w-0 flex flex-col gap-0.5 px-2.5 py-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
                         aria-current={selected ? 'page' : undefined}
+                        aria-pressed={selectionMode ? selectedForBulk : undefined}
                     >
                         <div className="flex items-center justify-between gap-3">
                             <div className="flex items-center gap-2 min-w-0">
+                                {selectionMode ? (
+                                    <span
+                                        className={`flex h-4 w-4 items-center justify-center rounded border ${selectedForBulk ? 'border-[var(--app-link)] bg-[var(--app-link)] text-white' : 'border-[var(--app-border)] text-transparent'}`}
+                                        aria-hidden="true"
+                                    >
+                                        <CheckIcon className="h-3 w-3" />
+                                    </span>
+                                ) : null}
                                 <span className="flex h-4 w-4 items-center justify-center" aria-hidden="true">
                                     <span
-                                        className={`h-2 w-2 rounded-full ${statusDotClass}`}
+                                        className={`h-2 w-2 rounded-full ${statusDisplay.dotClass}${statusDisplay.animate ? ' animate-pulse' : ''}`}
                                     />
                                 </span>
-                                <div className="truncate text-base font-medium">
+                                <div className={`truncate text-sm font-medium${!s.active ? ' text-[var(--app-hint)]' : ''}`}>
                                     {sessionName}
                                 </div>
+                                {s.acceptAllMessages ? (
+                                    <DoorOpenIcon className="h-3.5 w-3.5 shrink-0 text-[var(--app-hint)]" />
+                                ) : null}
                             </div>
                             <div className="flex items-center gap-2 shrink-0 text-xs">
-                                {s.thinking ? (
-                                    <span className="text-[#007AFF] animate-pulse">
-                                        {t('session.item.thinking')}
+                                {statusDisplay.i18nKey ? (
+                                    <span className={`${statusDisplay.labelClass}${statusDisplay.animate ? ' animate-pulse' : ''}`}>
+                                        {sessionStatus === 'waiting-for-permission'
+                                            ? `${t(statusDisplay.i18nKey)} · ${s.pendingRequestsCount}`
+                                            : t(statusDisplay.i18nKey)}
+                                    </span>
+                                ) : null}
+                                {unread ? (
+                                    <span className={unreadLabelClass}>
+                                        {t('session.item.unread')}
                                     </span>
                                 ) : null}
                                 {(() => {
@@ -415,11 +1000,6 @@ function SessionItem(props: {
                                         </span>
                                     )
                                 })()}
-                                {s.pendingRequestsCount > 0 ? (
-                                    <span className="text-[var(--app-badge-warning-text)]">
-                                        {t('session.item.pending')} {s.pendingRequestsCount}
-                                    </span>
-                                ) : null}
                                 <span className="text-[var(--app-hint)]">
                                     {formatRelativeTime(s.updatedAt, t)}
                                 </span>
@@ -431,11 +1011,19 @@ function SessionItem(props: {
                             </div>
                         ) : null}
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--app-hint)]">
-                            <span className="inline-flex items-center gap-2">
-                                <span className="flex h-4 w-4 items-center justify-center" aria-hidden="true">
-                                    ❖
+                            {projectLabel ? (
+                                <span className="truncate max-w-[160px]" title={projectLabel} data-session-project-label>
+                                    {projectLabel}
                                 </span>
-                                {getAgentLabel(s)}
+                            ) : null}
+                            {parentLabel ? (
+                                <span className="truncate max-w-[160px] italic" data-session-parent-label>
+                                    {parentLabel}
+                                </span>
+                            ) : null}
+                            <span className="inline-flex items-center gap-1" style={{ color: `var(${providerDisplay.colorVar})` }}>
+                                <ProviderIcon flavor={s.metadata?.flavor} size="sm" />
+                                {providerDisplay.label}
                             </span>
                             <span>{t('session.item.modelMode')}: {s.modelMode || 'default'}</span>
                             {s.metadata?.worktree?.branch ? (
@@ -445,7 +1033,7 @@ function SessionItem(props: {
                     </button>
                     <button
                         type="button"
-                        className="px-2 flex items-center justify-center text-[var(--app-hint)] hover:text-[var(--app-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
+                        className="px-2 shrink-0 flex items-center justify-center text-[var(--app-hint)] hover:text-[var(--app-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
                         onClick={(e) => {
                             e.stopPropagation()
                             const rect = e.currentTarget.getBoundingClientRect()
@@ -506,8 +1094,507 @@ function SessionItem(props: {
     )
 }
 
+type SessionItemProps = Parameters<typeof SessionItem>[0]
+
+function SortableSessionItem(
+    props: Omit<SessionItemProps, 'dragHandleBindings' | 'dragging' | 'dropTarget'>
+) {
+    const sortable = useSortable({
+        id: props.session.id,
+        disabled: !props.dndEnabled,
+    })
+
+    const transform = CSS.Transform.toString(sortable.transform)
+    const draggingTransform = sortable.isDragging
+        ? (transform ? `${transform} scale(1.02)` : 'scale(1.02)')
+        : transform
+
+    return (
+        <div
+            ref={sortable.setNodeRef}
+            style={{
+                transform: draggingTransform,
+                transition: sortable.transition,
+            }}
+            className={sortable.isDragging ? 'relative z-50' : undefined}
+            data-session-dragging={sortable.isDragging ? 'true' : 'false'}
+        >
+            <SessionItem
+                {...props}
+                dragging={sortable.isDragging}
+                dropTarget={sortable.isOver && !sortable.isDragging}
+                dragInProgress={props.dragInProgress}
+                dragHandleBindings={{
+                    attributes: sortable.attributes,
+                    listeners: sortable.listeners,
+                    setActivatorNodeRef: sortable.setActivatorNodeRef
+                }}
+            />
+        </div>
+    )
+}
+
+function buildParentChildTree(sessions: SessionSummary[]): { roots: SessionSummary[]; childrenOf: Map<string, SessionSummary[]> } {
+    const sessionIds = new Set(sessions.map(s => s.id))
+    const childrenOf = new Map<string, SessionSummary[]>()
+    const roots: SessionSummary[] = []
+
+    for (const session of sessions) {
+        const parentId = session.parentSessionId
+        if (parentId && sessionIds.has(parentId)) {
+            if (!childrenOf.has(parentId)) {
+                childrenOf.set(parentId, [])
+            }
+            childrenOf.get(parentId)!.push(session)
+        } else {
+            roots.push(session)
+        }
+    }
+
+    return { roots, childrenOf }
+}
+
+function flattenTree(
+    roots: SessionSummary[],
+    childrenOf: Map<string, SessionSummary[]>,
+    sessionTitleMap: Map<string, string>,
+    isTouch: boolean
+): Array<{ session: SessionSummary; indentLevel: number; parentLabel?: string }> {
+    const result: Array<{ session: SessionSummary; indentLevel: number; parentLabel?: string }> = []
+
+    function visit(session: SessionSummary, depth: number, parentName?: string) {
+        result.push({
+            session,
+            indentLevel: isTouch ? 0 : depth,
+            parentLabel: depth > 0 && isTouch ? parentName : undefined
+        })
+        const children = childrenOf.get(session.id)
+        if (children) {
+            const name = sessionTitleMap.get(session.id) ?? session.id.slice(0, 8)
+            for (const child of children) {
+                visit(child, depth + 1, name)
+            }
+        }
+    }
+
+    for (const root of roots) {
+        visit(root, 0)
+    }
+
+    return result
+}
+
+const TEAM_COLORS = [
+    '#3b82f6', '#8b5cf6', '#ec4899', '#ef4444',
+    '#f97316', '#eab308', '#22c55e', '#06b6d4',
+]
+
+function TeamGroupHeader(props: {
+    group: TeamGroup
+    isCollapsed: boolean
+    onToggle: () => void
+    onSpawn?: () => void
+    onRename?: () => void
+    onChangeColor?: () => void
+    onDelete?: () => void
+    unreadCount: number
+    style?: TeamGroupStyleProp
+    t: (key: string, params?: Record<string, string | number>) => string
+}) {
+    const { group, isCollapsed, onToggle, onSpawn, onRename, onChangeColor, onDelete, unreadCount, style = 'card', t } = props
+    const { isTouch } = usePlatform()
+    const aggregateStatus = deriveTeamAggregateStatus(group.sessions)
+    const statusDisplay = getTeamAggregateStatusDisplay(aggregateStatus)
+    const borderColor = group.teamColor ?? 'var(--app-link)'
+    const [menuOpen, setMenuOpen] = useState(false)
+    const [menuAnchorPoint, setMenuAnchorPoint] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+    const menuRef = useRef<HTMLDivElement>(null)
+
+    const longPressHandlers = useLongPress({
+        onLongPress: (point) => {
+            setMenuAnchorPoint(point)
+            setMenuOpen(true)
+        },
+        onClick: onToggle,
+        threshold: 500,
+        disabled: false,
+    })
+
+    useEffect(() => {
+        if (!menuOpen) return
+        const handleClickOutside = (e: MouseEvent) => {
+            if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+                setMenuOpen(false)
+            }
+        }
+        document.addEventListener('mousedown', handleClickOutside)
+        return () => document.removeEventListener('mousedown', handleClickOutside)
+    }, [menuOpen])
+
+    const handleContextMenu = (e: React.MouseEvent) => {
+        e.preventDefault()
+        setMenuAnchorPoint({ x: e.clientX, y: e.clientY })
+        setMenuOpen(true)
+    }
+
+    const headerStyle = style === 'card'
+        ? { borderWidth: '1px', borderColor: borderColor, borderRadius: '0.5rem', margin: '0.5rem 0.75rem 0 0.75rem' }
+        : { borderLeftWidth: '3px', borderLeftColor: borderColor }
+
+    return (
+        <div
+            data-group-header={group.teamName}
+            className={`sticky top-0 z-10 flex items-center gap-1 border-b border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-3 py-1.5 ${style === 'card' ? 'rounded-t-lg' : ''}`}
+            style={headerStyle}
+            onContextMenu={!isTouch ? handleContextMenu : undefined}
+        >
+            <button
+                type="button"
+                {...(isTouch ? longPressHandlers : { onClick: onToggle })}
+                className="flex min-w-0 flex-1 items-center gap-2 text-left transition-colors hover:bg-[var(--app-secondary-bg)]"
+                aria-expanded={!isCollapsed}
+            >
+                <ChevronIcon
+                    className="h-4 w-4 text-[var(--app-hint)]"
+                    collapsed={isCollapsed}
+                />
+                <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                        <span className="font-medium text-sm break-words" title={group.teamName}>
+                            {group.teamName}
+                        </span>
+                        <span className="shrink-0 text-xs text-[var(--app-hint)]">
+                            ({group.sessions.length})
+                        </span>
+                        {statusDisplay.i18nKey ? (
+                            <span className={`shrink-0 text-xs ${statusDisplay.labelClass}${statusDisplay.animate ? ' animate-pulse' : ''}`}>
+                                {t(statusDisplay.i18nKey)}
+                            </span>
+                        ) : null}
+                        {unreadCount > 0 ? (
+                            <span className="shrink-0 text-xs text-[var(--app-badge-warning-text)]">
+                                {unreadCount} {t('session.item.unread')}
+                            </span>
+                        ) : null}
+                    </div>
+                </div>
+            </button>
+            <button
+                type="button"
+                onClick={(e) => {
+                    e.stopPropagation()
+                    const rect = e.currentTarget.getBoundingClientRect()
+                    setMenuAnchorPoint({ x: rect.left, y: rect.bottom })
+                    setMenuOpen(true)
+                }}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[var(--app-hint)] hover:text-[var(--app-fg)] transition-colors hover:bg-[var(--app-secondary-bg)]"
+                aria-label={t('session.more')}
+            >
+                <MoreVerticalIcon className="h-4 w-4" />
+            </button>
+            {onSpawn ? (
+                <button
+                    type="button"
+                    onClick={onSpawn}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[var(--app-link)] opacity-0 group-hover/team:opacity-100 focus:opacity-100 transition-opacity hover:bg-[var(--app-subtle-bg)]"
+                    title={t('team.spawn')}
+                    aria-label={t('team.spawn')}
+                >
+                    <PlusIcon className="h-4 w-4" />
+                </button>
+            ) : null}
+
+            {menuOpen ? (
+                <div
+                    ref={menuRef}
+                    className="fixed z-50 min-w-[160px] rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] shadow-lg overflow-hidden"
+                    style={{ top: menuAnchorPoint.y, left: menuAnchorPoint.x }}
+                >
+                    {onRename ? (
+                        <button
+                            type="button"
+                            onClick={() => { setMenuOpen(false); onRename() }}
+                            className="flex w-full items-center px-3 py-2 text-sm text-left text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)]"
+                        >
+                            {t('team.menu.rename')}
+                        </button>
+                    ) : null}
+                    {onChangeColor ? (
+                        <button
+                            type="button"
+                            onClick={() => { setMenuOpen(false); onChangeColor() }}
+                            className="flex w-full items-center px-3 py-2 text-sm text-left text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)]"
+                        >
+                            {t('team.menu.changeColor')}
+                        </button>
+                    ) : null}
+                    {onDelete ? (
+                        <button
+                            type="button"
+                            onClick={() => { setMenuOpen(false); onDelete() }}
+                            className="flex w-full items-center px-3 py-2 text-sm text-left text-red-500 hover:bg-[var(--app-subtle-bg)]"
+                        >
+                            {t('team.menu.delete')}
+                        </button>
+                    ) : null}
+                </div>
+            ) : null}
+        </div>
+    )
+}
+
+function CreateTeamForm(props: {
+    api: ApiClient | null
+    onCreated: () => void
+    onCancel: () => void
+    t: (key: string, params?: Record<string, string | number>) => string
+}) {
+    const { api, onCreated, onCancel, t } = props
+    const [name, setName] = useState('')
+    const [color, setColor] = useState<string>(TEAM_COLORS[0])
+    const [isPending, setIsPending] = useState(false)
+    const [error, setError] = useState<string | null>(null)
+    const inputRef = useRef<HTMLInputElement>(null)
+    const queryClient = useQueryClient()
+
+    useEffect(() => {
+        inputRef.current?.focus()
+    }, [])
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault()
+        const trimmed = name.trim()
+        if (!trimmed || !api) return
+        setIsPending(true)
+        setError(null)
+        try {
+            await api.createTeam(trimmed, { color, persistent: true })
+            void queryClient.invalidateQueries({ queryKey: queryKeys.teams })
+            onCreated()
+        } catch {
+            setError(t('team.create.error'))
+        } finally {
+            setIsPending(false)
+        }
+    }
+
+    return (
+        <form onSubmit={handleSubmit} className="flex flex-col gap-2 border-b border-[var(--app-divider)] px-3 py-2 bg-[var(--app-subtle-bg)]">
+            <div className="flex items-center gap-2">
+                <input
+                    ref={inputRef}
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Escape') onCancel() }}
+                    placeholder={t('team.create.placeholder')}
+                    className="flex-1 min-w-0 px-2 py-1.5 rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-sm text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-1 focus:ring-[var(--app-link)]"
+                    disabled={isPending}
+                    maxLength={255}
+                />
+                <button
+                    type="submit"
+                    disabled={isPending || !name.trim() || !api}
+                    className="rounded bg-[var(--app-link)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                >
+                    {isPending ? t('team.create.creating') : t('team.create.submit')}
+                </button>
+                <button
+                    type="button"
+                    onClick={onCancel}
+                    disabled={isPending}
+                    className="rounded border border-[var(--app-border)] px-2 py-1.5 text-xs text-[var(--app-hint)]"
+                >
+                    {t('button.cancel')}
+                </button>
+            </div>
+            <div className="flex items-center gap-1.5">
+                {TEAM_COLORS.map((c) => (
+                    <button
+                        key={c}
+                        type="button"
+                        onClick={() => setColor(c)}
+                        className={`h-5 w-5 rounded-full border-2 transition-all ${color === c ? 'border-[var(--app-fg)] scale-110' : 'border-transparent'}`}
+                        style={{ backgroundColor: c }}
+                        aria-label={c}
+                    />
+                ))}
+            </div>
+            {error ? (
+                <div className="text-xs text-red-500">{error}</div>
+            ) : null}
+        </form>
+    )
+}
+
+function RenameTeamDialog(props: {
+    isOpen: boolean
+    onClose: () => void
+    currentName: string
+    api: ApiClient | null
+    teamId: string
+}) {
+    const { t } = useTranslation()
+    const { isOpen, onClose, currentName, api, teamId } = props
+    const [name, setName] = useState(currentName)
+    const [error, setError] = useState<string | null>(null)
+    const [isPending, setIsPending] = useState(false)
+    const inputRef = useRef<HTMLInputElement>(null)
+    const queryClient = useQueryClient()
+
+    useEffect(() => {
+        if (isOpen) {
+            setName(currentName)
+            setError(null)
+            setTimeout(() => {
+                inputRef.current?.focus()
+                inputRef.current?.select()
+            }, 100)
+        }
+    }, [isOpen, currentName])
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault()
+        const trimmed = name.trim()
+        if (!trimmed || trimmed === currentName || !api) {
+            onClose()
+            return
+        }
+        setIsPending(true)
+        setError(null)
+        try {
+            await api.updateTeam(teamId, { name: trimmed })
+            void queryClient.invalidateQueries({ queryKey: queryKeys.teams })
+            onClose()
+        } catch {
+            setError(t('team.rename.error'))
+        } finally {
+            setIsPending(false)
+        }
+    }
+
+    return (
+        <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+            <DialogContent className="max-w-sm">
+                <DialogHeader>
+                    <DialogTitle>{t('team.rename.title')}</DialogTitle>
+                </DialogHeader>
+                <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-4">
+                    <input
+                        ref={inputRef}
+                        type="text"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Escape') onClose() }}
+                        placeholder={t('team.rename.placeholder')}
+                        className="w-full px-3 py-2.5 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--app-button)] focus:border-transparent"
+                        disabled={isPending}
+                        maxLength={255}
+                    />
+                    {error ? (
+                        <div className="rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
+                            {error}
+                        </div>
+                    ) : null}
+                    <div className="flex gap-2 justify-end">
+                        <Button type="button" variant="secondary" onClick={onClose} disabled={isPending}>
+                            {t('button.cancel')}
+                        </Button>
+                        <Button type="submit" disabled={isPending || !name.trim()}>
+                            {isPending ? t('dialog.rename.saving') : t('button.save')}
+                        </Button>
+                    </div>
+                </form>
+            </DialogContent>
+        </Dialog>
+    )
+}
+
+function ChangeTeamColorDialog(props: {
+    isOpen: boolean
+    onClose: () => void
+    currentColor: string | null
+    api: ApiClient | null
+    teamId: string
+}) {
+    const { t } = useTranslation()
+    const { isOpen, onClose, currentColor, api, teamId } = props
+    const [color, setColor] = useState<string | null>(currentColor)
+    const [isPending, setIsPending] = useState(false)
+    const [error, setError] = useState<string | null>(null)
+    const queryClient = useQueryClient()
+
+    useEffect(() => {
+        if (isOpen) {
+            setColor(currentColor)
+            setError(null)
+        }
+    }, [isOpen, currentColor])
+
+    const handleSave = async () => {
+        if (!api) return
+        setIsPending(true)
+        setError(null)
+        try {
+            await api.updateTeam(teamId, { color })
+            void queryClient.invalidateQueries({ queryKey: queryKeys.teams })
+            onClose()
+        } catch {
+            setError(t('team.color.error'))
+        } finally {
+            setIsPending(false)
+        }
+    }
+
+    return (
+        <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+            <DialogContent className="max-w-xs">
+                <DialogHeader>
+                    <DialogTitle>{t('team.color.title')}</DialogTitle>
+                </DialogHeader>
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <button
+                        type="button"
+                        onClick={() => setColor(null)}
+                        className={`h-7 w-7 rounded-full border-2 transition-all flex items-center justify-center ${color === null ? 'border-[var(--app-fg)] scale-110' : 'border-[var(--app-border)]'}`}
+                        style={{ backgroundColor: 'var(--app-subtle-bg)' }}
+                        title={t('team.color.noColor')}
+                    >
+                        <span className="text-xs text-[var(--app-hint)]">—</span>
+                    </button>
+                    {TEAM_COLORS.map((c) => (
+                        <button
+                            key={c}
+                            type="button"
+                            onClick={() => setColor(c)}
+                            className={`h-7 w-7 rounded-full border-2 transition-all ${color === c ? 'border-[var(--app-fg)] scale-110' : 'border-transparent'}`}
+                            style={{ backgroundColor: c }}
+                            aria-label={c}
+                        />
+                    ))}
+                </div>
+                {error ? (
+                    <div className="mt-2 text-xs text-red-500">{error}</div>
+                ) : null}
+                <div className="mt-4 flex gap-2 justify-end">
+                    <Button type="button" variant="secondary" onClick={onClose} disabled={isPending}>
+                        {t('button.cancel')}
+                    </Button>
+                    <Button type="button" onClick={handleSave} disabled={isPending}>
+                        {isPending ? t('dialog.rename.saving') : t('button.save')}
+                    </Button>
+                </div>
+            </DialogContent>
+        </Dialog>
+    )
+}
+
+export type TeamGroupStyleProp = 'card' | 'left-border'
+
 export function SessionList(props: {
     sessions: SessionSummary[]
+    teams: TeamSummary[]
+    hideInactive?: boolean
     onSelect: (sessionId: string) => void
     onNewSession: (opts?: { directory?: string; machineId?: string }) => void
     onRefresh: () => void
@@ -515,20 +1602,192 @@ export function SessionList(props: {
     renderHeader?: boolean
     api: ApiClient | null
     selectedSessionId?: string | null
+    scrollContainerRef?: RefObject<HTMLElement | null>
     machineNames?: Map<string, string>
+    teamGroupStyle?: TeamGroupStyleProp
 }) {
     const { t } = useTranslation()
+    const { isTouch } = usePlatform()
+    const queryClient = useQueryClient()
     const { renderHeader = true, api, selectedSessionId, machineNames } = props
-    const groups = useMemo(
-        () => groupSessionsByDirectory(props.sessions),
+
+    const [selectionMode, setSelectionMode] = useState(false)
+    const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(() => new Set())
+    const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
+    const [clearInactiveOpen, setClearInactiveOpen] = useState(false)
+    const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null)
+    const [isBulkDeleting, setIsBulkDeleting] = useState(false)
+
+    // Team management state
+    const [showCreateTeam, setShowCreateTeam] = useState(false)
+    const [renameTeamGroup, setRenameTeamGroup] = useState<TeamGroup | null>(null)
+    const [colorTeamGroup, setColorTeamGroup] = useState<TeamGroup | null>(null)
+    const [deleteTeamGroup, setDeleteTeamGroup] = useState<TeamGroup | null>(null)
+    const [isTeamDeletePending, setIsTeamDeletePending] = useState(false)
+
+    const [readHistory, setReadHistory] = useState<SessionReadHistory>(() => loadSessionReadHistory())
+
+    const prevUpdatedAtRef = useRef<Map<string, number>>(new Map())
+    const prevActiveRef = useRef<Map<string, boolean>>(new Map())
+    const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => new Set())
+
+    useEffect(() => {
+        const knownSessionIds = new Set(props.sessions.map(session => session.id))
+
+        setReadHistory(prev => {
+            const pruned = pruneSessionReadHistory(prev, knownSessionIds)
+            if (pruned !== prev) {
+                saveSessionReadHistory(pruned)
+            }
+            return pruned
+        })
+
+        setSelectedSessionIds(prev => {
+            let changed = false
+            const next = new Set<string>()
+            for (const sessionId of prev) {
+                if (knownSessionIds.has(sessionId)) {
+                    next.add(sessionId)
+                } else {
+                    changed = true
+                }
+            }
+            return changed ? next : prev
+        })
+    }, [props.sessions])
+
+    useEffect(() => {
+        const prevUpdatedAt = prevUpdatedAtRef.current
+        const prevActive = prevActiveRef.current
+        const nextUpdatedAt = new Map<string, number>()
+        const nextActive = new Map<string, boolean>()
+
+        setUnreadSessionIds(prev => {
+            let next = prev
+            for (const session of props.sessions) {
+                nextUpdatedAt.set(session.id, session.updatedAt)
+                nextActive.set(session.id, session.active)
+                if (session.id === selectedSessionId) continue
+
+                const previousUpdatedAt = prevUpdatedAt.get(session.id)
+                const wasActive = prevActive.get(session.id)
+
+                const updatedAtBumped = previousUpdatedAt !== undefined
+                    && session.updatedAt > previousUpdatedAt
+                const becameInactive = wasActive === true && !session.active
+
+                if (updatedAtBumped || becameInactive) {
+                    if (!next.has(session.id)) {
+                        next = new Set(next)
+                        next.add(session.id)
+                    }
+                }
+            }
+            return next
+        })
+
+        prevUpdatedAtRef.current = nextUpdatedAt
+        prevActiveRef.current = nextActive
+    }, [props.sessions, selectedSessionId])
+
+    useEffect(() => {
+        if (!selectedSessionId) return
+
+        setReadHistory(prev => {
+            const next = { ...prev, [selectedSessionId]: Date.now() }
+            saveSessionReadHistory(next)
+            return next
+        })
+
+        setUnreadSessionIds(prev => {
+            if (!prev.has(selectedSessionId)) return prev
+            const next = new Set(prev)
+            next.delete(selectedSessionId)
+            return next
+        })
+    }, [selectedSessionId])
+
+    const { setSessionSortOrder, isPending: isSortOrderMutationPending } = useSessionSortOrderMutation(api)
+    const {
+        clearInactiveSessions,
+        isPending: isClearInactivePending
+    } = useClearInactiveSessions(api)
+    const [activeDragSessionId, setActiveDragSessionId] = useState<string | null>(null)
+    const [dragFrozenGroups, setDragFrozenGroups] = useState<SessionGroup[] | null>(null)
+
+    const filteredSessions = useMemo(
+        () => props.hideInactive ? props.sessions.filter(s => s.active) : props.sessions,
+        [props.sessions, props.hideInactive]
+    )
+    const liveGroups = useMemo(
+        () => groupSessions(filteredSessions, props.teams, readHistory),
+        [filteredSessions, props.teams, readHistory]
+    )
+    const displayGroups = useMemo(
+        () => dragFrozenGroups
+            ? patchGroupsVisuals(dragFrozenGroups, props.sessions)
+            : liveGroups,
+        [dragFrozenGroups, props.sessions, liveGroups]
+    )
+
+    const dndEnabled = !selectionMode
+        && !isBulkDeleting
+        && !isSortOrderMutationPending
+        && !isClearInactivePending
+        && Boolean(api)
+    const dragInProgress = activeDragSessionId !== null
+    const sensors = useSensors(
+        useSensor(MouseSensor, {
+            activationConstraint: { distance: 4 }
+        }),
+        useSensor(TouchSensor, {
+            activationConstraint: { delay: 200, tolerance: 5 }
+        }),
+        useSensor(KeyboardSensor, {
+            coordinateGetter: sortableKeyboardCoordinates
+        })
+    )
+    const dragInstructionsId = 'session-dnd-instructions'
+
+    const listContainerRef = useRef<HTMLDivElement>(null)
+
+    const sessionById = useMemo(
+        () => new Map(props.sessions.map(session => [session.id, session])),
         [props.sessions]
     )
-    const [collapseOverrides, setCollapseOverrides] = useState<Map<string, boolean>>(
-        () => new Map()
+
+    const sessionTitleMap = useMemo(
+        () => new Map(props.sessions.map(session => [session.id, getSessionTitle(session)])),
+        [props.sessions]
     )
+
+    const selectedSessions = useMemo(
+        () => Array.from(selectedSessionIds)
+            .map(sessionId => sessionById.get(sessionId))
+            .filter((session): session is SessionSummary => Boolean(session)),
+        [selectedSessionIds, sessionById]
+    )
+
+    const selectedCount = selectedSessions.length
+    const selectedActiveCount = selectedSessions.filter(session => session.active).length
+    const clearInactiveCounts = useMemo(
+        () => getClearInactiveCounts(props.sessions),
+        [props.sessions]
+    )
+    const hasInactiveSessions = clearInactiveCounts.all > 0
+
+    const [collapseOverrides, setCollapseOverrides] = useState<Map<string, boolean>>(
+        () => loadCollapseOverrides()
+    )
+
     const isGroupCollapsed = (group: SessionGroup): boolean => {
         const override = collapseOverrides.get(group.key)
         if (override !== undefined) return override
+        if (group.type === 'team') {
+            if (group.teamPersistent) return false
+            // Temp teams auto-collapse when all idle
+            return !group.hasActiveSession
+        }
         return !group.hasActiveSession
     }
 
@@ -536,6 +1795,7 @@ export function SessionList(props: {
         setCollapseOverrides(prev => {
             const next = new Map(prev)
             next.set(groupKey, !isCollapsed)
+            saveCollapseOverrides(next)
             return next
         })
     }
@@ -544,7 +1804,7 @@ export function SessionList(props: {
         setCollapseOverrides(prev => {
             if (prev.size === 0) return prev
             const next = new Map(prev)
-            const knownGroups = new Set(groups.map(group => group.key))
+            const knownGroups = new Set(displayGroups.map(group => group.key))
             let changed = false
             for (const groupKey of next.keys()) {
                 if (!knownGroups.has(groupKey)) {
@@ -552,16 +1812,177 @@ export function SessionList(props: {
                     changed = true
                 }
             }
-            return changed ? next : prev
+            if (!changed) return prev
+            saveCollapseOverrides(next)
+            return next
         })
-    }, [groups])
+    }, [displayGroups])
+
+    const toggleSelectedSession = useCallback((sessionId: string) => {
+        setSelectedSessionIds(prev => {
+            const next = new Set(prev)
+            if (next.has(sessionId)) {
+                next.delete(sessionId)
+            } else {
+                next.add(sessionId)
+            }
+            return next
+        })
+    }, [])
+
+    const handleSessionSelect = useCallback((sessionId: string) => {
+        if (selectionMode) {
+            toggleSelectedSession(sessionId)
+            return
+        }
+
+        props.onSelect(sessionId)
+    }, [props, selectionMode, toggleSelectedSession])
+
+    const handleEnableSelectionMode = useCallback(() => {
+        setSelectionMode(true)
+        setBulkDeleteError(null)
+    }, [])
+
+    const handleCancelSelectionMode = useCallback(() => {
+        setSelectionMode(false)
+        setSelectedSessionIds(new Set())
+        setBulkDeleteError(null)
+    }, [])
+
+    const handleBulkDelete = useCallback(async () => {
+        if (!api || selectedSessions.length === 0) {
+            setBulkDeleteOpen(false)
+            return
+        }
+
+        setIsBulkDeleting(true)
+        setBulkDeleteError(null)
+
+        const failedSessionIds: string[] = []
+
+        for (const session of selectedSessions) {
+            try {
+                if (session.active) {
+                    await api.archiveSession(session.id)
+                } else {
+                    await api.deleteSession(session.id)
+                    clearMessageWindow(session.id)
+                    queryClient.removeQueries({ queryKey: queryKeys.session(session.id) })
+                }
+            } catch {
+                failedSessionIds.push(session.id)
+            }
+        }
+
+        await queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
+
+        setIsBulkDeleting(false)
+        setBulkDeleteOpen(false)
+
+        if (failedSessionIds.length > 0) {
+            setBulkDeleteError(t('dialog.delete.selected.error', { n: failedSessionIds.length }))
+            setSelectedSessionIds(new Set(failedSessionIds))
+            setSelectionMode(true)
+            return
+        }
+
+        setSelectionMode(false)
+        setSelectedSessionIds(new Set())
+    }, [api, queryClient, selectedSessions, t])
+
+    const handleDeleteTeam = useCallback(async () => {
+        if (!api || !deleteTeamGroup) return
+        setIsTeamDeletePending(true)
+        try {
+            await api.deleteTeam(deleteTeamGroup.teamId)
+            void queryClient.invalidateQueries({ queryKey: queryKeys.teams })
+            setDeleteTeamGroup(null)
+        } catch {
+            throw new Error(t('dialog.error.default'))
+        } finally {
+            setIsTeamDeletePending(false)
+        }
+    }, [api, deleteTeamGroup, queryClient, t])
+
+    const handleClearInactive = useCallback(async (olderThan: ClearInactiveSessionsOlderThan) => {
+        const result = await clearInactiveSessions(olderThan)
+        if (result.failed.length > 0) {
+            throw new Error(t('dialog.clearInactive.error', { n: result.failed.length }))
+        }
+    }, [clearInactiveSessions, t])
+
+    const finishDrag = useCallback(() => {
+        setActiveDragSessionId(null)
+        setDragFrozenGroups(null)
+    }, [])
+
+    useEffect(() => {
+        if (!activeDragSessionId) return
+        const sessionStillExists = props.sessions.some(session => session.id === activeDragSessionId)
+        if (!sessionStillExists) {
+            finishDrag()
+        }
+    }, [activeDragSessionId, finishDrag, props.sessions])
+
+    const handleDragStart = useCallback((event: DragStartEvent) => {
+        if (!dndEnabled) return
+        setActiveDragSessionId(String(event.active.id))
+        setDragFrozenGroups(displayGroups)
+    }, [dndEnabled, displayGroups])
+
+    const handleDragCancel = useCallback(() => {
+        finishDrag()
+    }, [finishDrag])
+
+    const handleScopeDragEnd = useCallback(async (event: DragEndEvent, scopeSessions: SessionSummary[]) => {
+        const activeId = String(event.active.id)
+        const overId = event.over?.id ? String(event.over.id) : null
+
+        if (!overId || activeId === overId || !api) {
+            finishDrag()
+            return
+        }
+
+        const fromIndex = scopeSessions.findIndex(session => session.id === activeId)
+        const toIndex = scopeSessions.findIndex(session => session.id === overId)
+        if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) {
+            finishDrag()
+            return
+        }
+
+        const reorderedScope = arrayMove(scopeSessions, fromIndex, toIndex)
+        const updates = buildSortOrderUpdatesForReorder(reorderedScope, activeId)
+        if (updates.length === 0) {
+            finishDrag()
+            return
+        }
+
+        const rollback = applyOptimisticSortOrderUpdates(queryClient, updates)
+        finishDrag()
+
+        try {
+            for (const update of updates) {
+                await setSessionSortOrder(update)
+            }
+        } catch {
+            rollback()
+            void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
+        }
+    }, [api, finishDrag, queryClient, setSessionSortOrder])
+
+    const bulkDeleteDescription = selectedActiveCount > 0
+        ? t('dialog.delete.selected.descriptionWithActive', { n: selectedCount, m: selectedActiveCount })
+        : t('dialog.delete.selected.description', { n: selectedCount })
 
     return (
         <div className="mx-auto w-full max-w-content flex flex-col">
             {renderHeader ? (
                 <div className="flex items-center justify-between px-3 py-1">
                     <div className="text-xs text-[var(--app-hint)]">
-                        {t('sessions.count', { n: props.sessions.length, m: groups.length })}
+                        {props.hideInactive
+                            ? t('sessions.countActive', { n: filteredSessions.length, m: displayGroups.length })
+                            : t('sessions.count', { n: filteredSessions.length, m: displayGroups.length })}
                     </div>
                     <button
                         type="button"
@@ -574,15 +1995,157 @@ export function SessionList(props: {
                 </div>
             ) : null}
 
-            <div className="flex flex-col">
-                {groups.map((group) => {
+            <div className="flex items-center justify-between border-b border-[var(--app-divider)] px-3 py-2">
+                {selectionMode ? (
+                    <>
+                        <span className="text-xs text-[var(--app-hint)]">
+                            {t('sessions.selection.count', { n: selectedCount })}
+                        </span>
+                        <div className="flex items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={handleCancelSelectionMode}
+                                className="rounded border border-[var(--app-border)] px-2 py-1 text-xs text-[var(--app-hint)]"
+                            >
+                                {t('sessions.selection.cancel')}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setBulkDeleteOpen(true)}
+                                disabled={selectedCount === 0}
+                                className="rounded bg-red-500 px-2 py-1 text-xs text-white disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                                {t('sessions.selection.delete')}
+                            </button>
+                        </div>
+                    </>
+                ) : (
+                    <div className="ml-auto flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setShowCreateTeam(true)}
+                            disabled={!api}
+                            className="rounded border border-[var(--app-border)] px-2 py-1 text-xs text-[var(--app-link)] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            {t('team.create')}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setClearInactiveOpen(true)}
+                            disabled={!hasInactiveSessions || !api || isClearInactivePending}
+                            className="rounded border border-[var(--app-border)] px-2 py-1 text-xs text-[var(--app-hint)] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            {t('sessions.action.clearInactive')}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleEnableSelectionMode}
+                            className="rounded border border-[var(--app-border)] px-2 py-1 text-xs text-[var(--app-hint)]"
+                        >
+                            {t('sessions.selection.edit')}
+                        </button>
+                    </div>
+                )}
+            </div>
+
+            {bulkDeleteError ? (
+                <div className="px-3 py-2 text-xs text-red-600">
+                    {bulkDeleteError}
+                </div>
+            ) : null}
+
+            {showCreateTeam ? (
+                <CreateTeamForm
+                    api={api}
+                    onCreated={() => setShowCreateTeam(false)}
+                    onCancel={() => setShowCreateTeam(false)}
+                    t={t}
+                />
+            ) : null}
+
+            <div ref={listContainerRef} className="flex flex-col">
+                <p id={dragInstructionsId} className="sr-only">
+                    {t('session.dragHandle.instructions')}
+                </p>
+                {displayGroups.map((group) => {
                     const isCollapsed = isGroupCollapsed(group)
+                    const groupUnreadCount = group.sessions.filter(session => unreadSessionIds.has(session.id)).length
+
+                    if (group.type === 'team') {
+                        const { roots, childrenOf } = buildParentChildTree(group.sessions)
+                        const flatItems = flattenTree(roots, childrenOf, sessionTitleMap, isTouch)
+
+                        const teamStyle = props.teamGroupStyle ?? 'card'
+                        const teamContainerClass = teamStyle === 'card'
+                            ? 'group/team mx-3 mt-2 rounded-lg overflow-hidden border border-[var(--app-divider)]'
+                            : 'group/team'
+
+                        return (
+                            <div key={group.key} className={teamContainerClass} style={teamStyle === 'card' ? { borderColor: group.teamColor ?? 'var(--app-divider)' } : undefined}>
+                                <TeamGroupHeader
+                                    group={group}
+                                    isCollapsed={isCollapsed}
+                                    onToggle={() => toggleGroup(group.key, isCollapsed)}
+                                    onRename={api ? () => setRenameTeamGroup(group) : undefined}
+                                    onChangeColor={api ? () => setColorTeamGroup(group) : undefined}
+                                    onDelete={api ? () => setDeleteTeamGroup(group) : undefined}
+                                    unreadCount={groupUnreadCount}
+                                    style={teamStyle}
+                                    t={t}
+                                />
+                                {!isCollapsed ? (
+                                    <DndContext
+                                        sensors={sensors}
+                                        collisionDetection={closestCenter}
+                                        onDragStart={handleDragStart}
+                                        onDragCancel={handleDragCancel}
+                                        onDragEnd={(event) => {
+                                            void handleScopeDragEnd(event, group.sessions)
+                                        }}
+                                    >
+                                        <SortableContext
+                                            items={group.sessions.map(session => session.id)}
+                                            strategy={verticalListSortingStrategy}
+                                        >
+                                            <div className="flex flex-col divide-y divide-[var(--app-divider)] border-b border-[var(--app-divider)]">
+                                                {flatItems.map(({ session, indentLevel, parentLabel }) => (
+                                                    <SortableSessionItem
+                                                        key={session.id}
+                                                        session={session}
+                                                        onSelect={handleSessionSelect}
+                                                        onToggleSelected={toggleSelectedSession}
+                                                        showPath={false}
+                                                        indentLevel={indentLevel}
+                                                        parentLabel={parentLabel ? t('team.parentBadge', { name: parentLabel }) : undefined}
+                                                        api={api}
+                                                        selected={session.id === selectedSessionId}
+                                                        selectionMode={selectionMode}
+                                                        selectedForBulk={selectedSessionIds.has(session.id)}
+                                                        unread={unreadSessionIds.has(session.id)}
+                                                        dndEnabled={dndEnabled}
+                                                        dragInstructionsId={dragInstructionsId}
+                                                        dragInProgress={dragInProgress}
+                                                    />
+                                                ))}
+                                            </div>
+                                        </SortableContext>
+                                    </DndContext>
+                                ) : null}
+                            </div>
+                        )
+                    }
+
+                    // Directory group
                     const canQuickCreateInGroup = group.directory !== 'Other'
-                    const groupMachineId = group.machineId ?? undefined
+                    const groupMachineId = group.machineId ?? group.sessions[0]?.metadata?.machineId
                     const groupMachineName = groupMachineId ? machineNames?.get(groupMachineId) : undefined
+                    const groupAttentionCount = group.sessions.filter(session =>
+                        deriveSessionStatus(session) === 'waiting-for-permission'
+                    ).length
+
                     return (
                         <div key={group.key}>
-                            <div className="sticky top-0 z-10 flex items-center gap-1 border-b border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-3 py-2">
+                            <div data-group-header={group.directory} className="sticky top-0 z-10 flex items-center gap-1 border-b border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-3 py-1.5">
                                 <button
                                     type="button"
                                     onClick={() => toggleGroup(group.key, isCollapsed)}
@@ -595,12 +2158,22 @@ export function SessionList(props: {
                                     />
                                     <div className="min-w-0 flex-1">
                                         <div className="flex items-center gap-2">
-                                            <span className="font-medium text-base break-words" title={group.directory}>
+                                            <span className="font-medium text-sm break-words" title={group.directory}>
                                                 {group.displayName}
                                             </span>
                                             <span className="shrink-0 text-xs text-[var(--app-hint)]">
                                                 ({group.sessions.length})
                                             </span>
+                                            {groupAttentionCount > 0 ? (
+                                                <span className="shrink-0 rounded-full bg-[var(--app-badge-warning-bg)] border border-[var(--app-badge-warning-border)] px-1.5 text-xs text-[var(--app-badge-warning-text)]">
+                                                    {groupAttentionCount}
+                                                </span>
+                                            ) : null}
+                                            {groupUnreadCount > 0 ? (
+                                                <span className="shrink-0 text-xs text-[var(--app-badge-warning-text)]">
+                                                    {groupUnreadCount} {t('session.item.unread')}
+                                                </span>
+                                            ) : null}
                                         </div>
                                         {groupMachineName ? (
                                             <div className="text-xs text-[var(--app-hint)] truncate">
@@ -625,23 +2198,99 @@ export function SessionList(props: {
                                 ) : null}
                             </div>
                             {!isCollapsed ? (
-                                <div className="flex flex-col divide-y divide-[var(--app-divider)] border-b border-[var(--app-divider)]">
-                                    {group.sessions.map((s) => (
-                                        <SessionItem
-                                            key={s.id}
-                                            session={s}
-                                            onSelect={props.onSelect}
-                                            showPath={false}
-                                            api={api}
-                                            selected={s.id === selectedSessionId}
-                                        />
-                                    ))}
-                                </div>
+                                <DndContext
+                                    sensors={sensors}
+                                    collisionDetection={closestCenter}
+                                    onDragStart={handleDragStart}
+                                    onDragCancel={handleDragCancel}
+                                    onDragEnd={(event) => {
+                                        void handleScopeDragEnd(event, group.sessions)
+                                    }}
+                                >
+                                    <SortableContext
+                                        items={group.sessions.map(session => session.id)}
+                                        strategy={verticalListSortingStrategy}
+                                    >
+                                        <div className="flex flex-col divide-y divide-[var(--app-divider)] border-b border-[var(--app-divider)]">
+                                            {group.sessions.map((session) => (
+                                                <SortableSessionItem
+                                                    key={session.id}
+                                                    session={session}
+                                                    onSelect={handleSessionSelect}
+                                                    onToggleSelected={toggleSelectedSession}
+                                                    showPath={false}
+                                                    api={api}
+                                                    selected={session.id === selectedSessionId}
+                                                    selectionMode={selectionMode}
+                                                    selectedForBulk={selectedSessionIds.has(session.id)}
+                                                    unread={unreadSessionIds.has(session.id)}
+                                                    dndEnabled={dndEnabled}
+                                                    dragInstructionsId={dragInstructionsId}
+                                                    dragInProgress={dragInProgress}
+                                                />
+                                            ))}
+                                        </div>
+                                    </SortableContext>
+                                </DndContext>
                             ) : null}
                         </div>
                     )
                 })}
+
+                {displayGroups.length === 0 && props.sessions.length > 0 && props.hideInactive ? (
+                    <div className="px-3 py-8 text-center text-sm text-[var(--app-hint)]">
+                        {t('sessions.emptyInactive')}
+                    </div>
+                ) : null}
             </div>
+
+            <ClearInactiveDialog
+                isOpen={clearInactiveOpen}
+                onClose={() => setClearInactiveOpen(false)}
+                onConfirm={handleClearInactive}
+                isPending={isClearInactivePending}
+                counts={clearInactiveCounts}
+            />
+
+            <ConfirmDialog
+                isOpen={bulkDeleteOpen}
+                onClose={() => setBulkDeleteOpen(false)}
+                title={t('dialog.delete.selected.title')}
+                description={bulkDeleteDescription}
+                confirmLabel={t('dialog.delete.selected.confirm')}
+                confirmingLabel={t('dialog.delete.selected.confirming')}
+                onConfirm={handleBulkDelete}
+                isPending={isBulkDeleting}
+                destructive
+            />
+
+            <RenameTeamDialog
+                isOpen={renameTeamGroup !== null}
+                onClose={() => setRenameTeamGroup(null)}
+                currentName={renameTeamGroup?.teamName ?? ''}
+                api={api}
+                teamId={renameTeamGroup?.teamId ?? ''}
+            />
+
+            <ChangeTeamColorDialog
+                isOpen={colorTeamGroup !== null}
+                onClose={() => setColorTeamGroup(null)}
+                currentColor={colorTeamGroup?.teamColor ?? null}
+                api={api}
+                teamId={colorTeamGroup?.teamId ?? ''}
+            />
+
+            <ConfirmDialog
+                isOpen={deleteTeamGroup !== null}
+                onClose={() => setDeleteTeamGroup(null)}
+                title={t('team.delete.title')}
+                description={t('team.delete.description', { name: deleteTeamGroup?.teamName ?? '' })}
+                confirmLabel={t('team.delete.confirm')}
+                confirmingLabel={t('team.delete.confirming')}
+                onConfirm={handleDeleteTeam}
+                isPending={isTeamDeletePending}
+                destructive
+            />
         </div>
     )
 }

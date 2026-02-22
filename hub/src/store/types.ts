@@ -14,6 +14,9 @@ export type StoredSession = {
     active: boolean
     activeAt: number | null
     seq: number
+    sortOrder: string | null
+    parentSessionId: string | null
+    acceptAllMessages: boolean
 }
 
 export type StoredMachine = {
@@ -56,10 +59,41 @@ export type StoredPushSubscription = {
     createdAt: number
 }
 
+export type StoredTeam = {
+    id: string
+    name: string
+    namespace: string
+    color: string | null
+    persistent: boolean
+    ttlSeconds: number
+    sortOrder: string | null
+    lastActiveMemberAt: number | null
+    createdBy: string | null
+    createdAt: number
+}
+
 export type StoredUserPreferences = {
     namespace: string
     readyAnnouncements: boolean
+    permissionNotifications: boolean
+    errorNotifications: boolean
+    teamGroupStyle: string
     updatedAt: number
+}
+
+
+export type StoredSessionBead = {
+    sessionId: string
+    beadId: string
+    linkedAt: number
+    linkedBy: string | null
+}
+
+export type StoredBeadSnapshot = {
+    sessionId: string
+    beadId: string
+    data: unknown
+    fetchedAt: number
 }
 
 export type VersionedUpdateResult<T> =

@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import os from 'os';
+import { rmSync } from 'node:fs';
 
 import { ApiClient } from '@/api/api';
 import { TrackedSession } from './types';
@@ -34,7 +35,7 @@ const formatCodexConfigOverrides = (overrides: string[]): string => {
 };
 
 const writeCodexConfigFile = async (codexHomeDir: string, overrides: string[]): Promise<void> => {
-  await fs.mkdir(codexHomeDir, { recursive: true });
+  await fs.mkdir(codexHomeDir, { recursive: true, mode: 0o700 });
   const configPath = join(codexHomeDir, 'config.toml');
   await fs.writeFile(configPath, formatCodexConfigOverrides(overrides), 'utf8');
 };
@@ -43,12 +44,68 @@ const copyCodexAuthIfPresent = async (sourceDir: string, destDir: string): Promi
   try {
     const authPath = join(sourceDir, 'auth.json');
     const contents = await fs.readFile(authPath);
-    await fs.mkdir(destDir, { recursive: true });
-    await fs.writeFile(join(destDir, 'auth.json'), contents);
+    await fs.mkdir(destDir, { recursive: true, mode: 0o700 });
+    const destAuthPath = join(destDir, 'auth.json');
+    await fs.writeFile(destAuthPath, contents, { mode: 0o600 });
+    await fs.chmod(destAuthPath, 0o600).catch(() => {});
   } catch {
     // Best-effort: auth.json may not exist
   }
 };
+
+export function cleanupCodexHomeDirSync(codexHomeDir?: string): void {
+  if (!codexHomeDir) {
+    return;
+  }
+
+  try {
+    rmSync(codexHomeDir, { recursive: true, force: true });
+  } catch (error) {
+    logger.debug(`[RUNNER RUN] Failed to cleanup codex home dir: ${codexHomeDir}`, error);
+  }
+}
+
+export function cleanupCodexHomeForSessionSync(
+  session: Pick<TrackedSession, 'codexHomeDir' | 'happySessionId'> | undefined,
+  codexHomeBySessionId: Map<string, string>
+): void {
+  if (!session) {
+    return;
+  }
+
+  if (session.happySessionId) {
+    codexHomeBySessionId.delete(session.happySessionId);
+  }
+
+  const codexHomeDir = session.codexHomeDir;
+  if (!codexHomeDir) {
+    return;
+  }
+
+  const stillReferenced = Array.from(codexHomeBySessionId.values()).some((trackedCodexHomeDir) => trackedCodexHomeDir === codexHomeDir);
+  if (stillReferenced) {
+    return;
+  }
+
+  cleanupCodexHomeDirSync(codexHomeDir);
+}
+
+export function cleanupAllCodexHomesSync(
+  codexHomeBySessionId: Map<string, string>,
+  trackedSessions: Iterable<Pick<TrackedSession, 'codexHomeDir'>> = []
+): void {
+  const knownCodexHomes = new Set<string>(codexHomeBySessionId.values());
+  for (const session of trackedSessions) {
+    if (session.codexHomeDir) {
+      knownCodexHomes.add(session.codexHomeDir);
+    }
+  }
+
+  for (const codexHomeDir of knownCodexHomes) {
+    cleanupCodexHomeDirSync(codexHomeDir);
+  }
+  codexHomeBySessionId.clear();
+}
 
 export async function startRunner(): Promise<void> {
   // We don't have cleanup function at the time of server construction
@@ -79,6 +136,10 @@ export async function startRunner(): Promise<void> {
       resolve({ source, errorMessage });
     };
   });
+
+  // Setup state - key by PID
+  const pidToTrackedSession = new Map<number, TrackedSession>();
+  const codexHomeBySessionId = new Map<string, string>();
 
   // Setup signal handlers
   process.on('SIGINT', () => {
@@ -114,6 +175,7 @@ export async function startRunner(): Promise<void> {
 
   process.on('exit', (code) => {
     logger.debug(`[RUNNER RUN] Process exiting with code: ${code}`);
+    cleanupAllCodexHomesSync(codexHomeBySessionId, pidToTrackedSession.values());
   });
 
   process.on('beforeExit', (code) => {
@@ -150,10 +212,6 @@ export async function startRunner(): Promise<void> {
     // Ensure auth and machine registration BEFORE anything else
     const { machineId } = await authAndSetupMachineIfNeeded();
     logger.debug('[RUNNER RUN] Auth and machine setup complete');
-
-    // Setup state - key by PID
-    const pidToTrackedSession = new Map<number, TrackedSession>();
-    const codexHomeBySessionId = new Map<string, string>();
 
     // Session spawning awaiter system
     const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
@@ -361,7 +419,9 @@ export async function startRunner(): Promise<void> {
               };
             }
 
-            await fs.writeFile(join(resolvedCodexHomeDir, 'auth.json'), options.token);
+            const codexAuthPath = join(resolvedCodexHomeDir, 'auth.json');
+            await fs.writeFile(codexAuthPath, options.token, { mode: 0o600 });
+            await fs.chmod(codexAuthPath, 0o600).catch(() => {});
           } else if (options.agent === 'claude' || !options.agent) {
             extraEnv = {
               ...extraEnv,
@@ -465,7 +525,7 @@ export async function startRunner(): Promise<void> {
           childProcess: happyProcess,
           directoryCreated,
           message: directoryCreated ? `The path '${directory}' did not exist. We created a new folder and spawned a new session there.` : undefined,
-          codexHomeDir: resolvedCodexHomeDir
+          codexHomeDir: createdCodexHomeDir ? resolvedCodexHomeDir : undefined
         };
 
         pidToTrackedSession.set(pid, trackedSession);
@@ -510,7 +570,7 @@ export async function startRunner(): Promise<void> {
             });
           });
         });
-        if (spawnResult.type === 'success' && agent === 'codex' && resolvedCodexHomeDir) {
+        if (spawnResult.type === 'success' && agent === 'codex' && resolvedCodexHomeDir && createdCodexHomeDir) {
           codexHomeBySessionId.set(spawnResult.sessionId, resolvedCodexHomeDir);
         }
         if (spawnResult.type !== 'success') {
@@ -554,6 +614,7 @@ export async function startRunner(): Promise<void> {
             }
           }
 
+          cleanupCodexHomeForSessionSync(session, codexHomeBySessionId);
           pidToTrackedSession.delete(pid);
           logger.debug(`[RUNNER RUN] Removed session ${sessionId} from tracking`);
           return true;
@@ -567,6 +628,8 @@ export async function startRunner(): Promise<void> {
     // Handle child process exit
     const onChildExited = (pid: number) => {
       logger.debug(`[RUNNER RUN] Removing exited process PID ${pid} from tracking`);
+      const session = pidToTrackedSession.get(pid);
+      cleanupCodexHomeForSessionSync(session, codexHomeBySessionId);
       pidToTrackedSession.delete(pid);
     };
 
@@ -655,9 +718,10 @@ export async function startRunner(): Promise<void> {
       }
 
       // Prune stale sessions
-      for (const [pid, _] of pidToTrackedSession.entries()) {
+      for (const [pid, session] of pidToTrackedSession.entries()) {
         if (!isProcessAlive(pid)) {
           logger.debug(`[RUNNER RUN] Removing stale session with PID ${pid} (process no longer exists)`);
+          cleanupCodexHomeForSessionSync(session, codexHomeBySessionId);
           pidToTrackedSession.delete(pid);
         }
       }
@@ -747,6 +811,7 @@ export async function startRunner(): Promise<void> {
       apiMachine.shutdown();
       await stopControlServer();
       await cleanupRunnerState();
+      cleanupAllCodexHomesSync(codexHomeBySessionId, pidToTrackedSession.values());
       await releaseRunnerLock(runnerLockHandle);
 
       logger.debug('[RUNNER RUN] Cleanup completed, exiting process');

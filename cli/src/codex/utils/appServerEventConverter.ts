@@ -174,15 +174,21 @@ export class AppServerEventConverter {
                 );
             }
 
-            if (msgType === 'task_started' || msgType === 'task_complete') {
+            if (msgType === 'task_started') {
                 const turnId = asString(msg.turn_id ?? msg.turnId ?? paramsRecord.id);
-                return this.handleNotification(
-                    msgType === 'task_started' ? 'turn/started' : 'turn/completed',
-                    {
-                        turn: turnId ? { id: turnId } : {},
-                        ...(msgType === 'task_complete' ? { status: 'completed' } : {})
-                    }
-                );
+                return this.handleNotification('turn/started', {
+                    turn: turnId ? { id: turnId } : {}
+                });
+            }
+
+            if (msgType === 'task_complete') {
+                // codex/event/task_complete fires per-inference-step within a
+                // multi-step agentic chain. The authoritative turn-end signal
+                // is the direct turn/completed notification. Emitting
+                // task_complete here would prematurely clear the thinking
+                // indicator between tool executions.
+                events.push({ type: 'codex_step_complete' });
+                return events;
             }
 
             if (msgType === 'turn_diff') {
@@ -427,7 +433,25 @@ export class AppServerEventConverter {
                 return events;
             }
 
-            if (itemType === 'usermessage' || itemType === 'mcptoolcall' || itemType === 'websearch') {
+            const emitItemActivity = () => {
+                events.push({
+                    type: 'item_activity',
+                    item_type: itemType,
+                    item_id: itemId
+                });
+            };
+
+            if (itemType === 'usermessage') {
+                if (method === 'item/completed') {
+                    this.completedItemKeys.add(completionKey);
+                }
+                return events;
+            }
+
+            if (itemType === 'mcptoolcall' || itemType === 'websearch') {
+                if (method === 'item/started') {
+                    emitItemActivity();
+                }
                 if (method === 'item/completed') {
                     this.completedItemKeys.add(completionKey);
                 }
@@ -435,6 +459,9 @@ export class AppServerEventConverter {
             }
 
             if (itemType === 'agentmessage') {
+                if (method === 'item/started') {
+                    emitItemActivity();
+                }
                 if (method === 'item/completed') {
                     const text = asString(item.text ?? item.message ?? item.content) ?? this.agentMessageBuffers.get(itemId);
                     if (text) {
@@ -447,6 +474,9 @@ export class AppServerEventConverter {
             }
 
             if (itemType === 'reasoning') {
+                if (method === 'item/started') {
+                    emitItemActivity();
+                }
                 if (method === 'item/completed') {
                     const text = asString(item.text ?? item.message ?? item.content) ?? this.reasoningBuffers.get(itemId);
                     if (text) {

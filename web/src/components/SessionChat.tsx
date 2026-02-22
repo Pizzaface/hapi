@@ -6,6 +6,7 @@ import type { AttachmentMetadata, DecryptedMessage, ModelMode, PermissionMode, S
 import type { ChatBlock, NormalizedMessage } from '@/chat/types'
 import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
+import { setPendingPermissionRequestIds } from '@/lib/message-window-store'
 import { reduceChatBlocks } from '@/chat/reducer'
 import { reconcileChatBlocks } from '@/chat/reconcile'
 import { HappyComposer } from '@/components/AssistantChat/HappyComposer'
@@ -15,13 +16,19 @@ import { createAttachmentAdapter } from '@/lib/attachmentAdapter'
 import { SessionHeader } from '@/components/SessionHeader'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useSessionActions } from '@/hooks/mutations/useSessionActions'
+import { useSessionBeads } from '@/hooks/queries/useSessionBeads'
 import { useVoiceOptional } from '@/lib/voice-context'
 import { RealtimeVoiceSession, registerSessionStore, registerVoiceHooksStore, voiceHooks } from '@/realtime'
 import { McpInfoDialog } from '@/components/McpInfoDialog'
+import { SessionTodoPanel } from '@/components/SessionTodoPanel'
+import { SessionBeadPanel } from '@/components/SessionBeadPanel'
 import { ModelSelectorDialog } from '@/components/ModelSelectorDialog'
 import { DevMessageStream } from '@/components/DevMessageStream'
 import { isClaudeFlavor } from '@/lib/agentFlavorUtils'
+import { useToast } from '@/lib/toast-context'
 import { MODEL_MODES } from '@hapi/protocol'
+import { IntroCard } from '@/components/AssistantChat/IntroCard'
+import { isExitSlashCommand } from './sessionExitCommand'
 
 export function SessionChat(props: {
     api: ApiClient
@@ -34,6 +41,7 @@ export function SessionChat(props: {
     isSending: boolean
     pendingCount: number
     messagesVersion: number
+    hasPendingPermissionPrompt: boolean
     onBack: () => void
     onRefresh: () => void
     onLoadMore: () => Promise<unknown>
@@ -48,6 +56,7 @@ export function SessionChat(props: {
 }) {
     const { haptic } = usePlatform()
     const navigate = useNavigate()
+    const { addToast } = useToast()
     const sessionInactive = !props.session.active
     const normalizedCacheRef = useRef<Map<string, { source: DecryptedMessage; normalized: NormalizedMessage | null }>>(new Map())
     const blocksByIdRef = useRef<Map<string, ChatBlock>>(new Map())
@@ -56,11 +65,12 @@ export function SessionChat(props: {
     const [showModelSelector, setShowModelSelector] = useState(false)
     const [devViewOpen, setDevViewOpen] = useState(false)
     const agentFlavor = props.session.metadata?.flavor ?? null
-    const { abortSession, switchSession, setPermissionMode, setModelMode } = useSessionActions(
+    const { abortSession, switchSession, setPermissionMode, setModelMode, exitSession } = useSessionActions(
         props.api,
         props.session.id,
         agentFlavor
     )
+    const { beads, stale: beadsStale } = useSessionBeads(props.api, props.session.id)
 
     // Voice assistant integration
     const voice = useVoiceOptional()
@@ -137,6 +147,25 @@ export function SessionChat(props: {
 
         prevRequestIdsRef.current = currentIds
     }, [props.session.agentState?.requests, props.session.id])
+
+    // Propagate pending permission request IDs to the message window store
+    // so it can detect permission prompts in the pending queue.
+    useEffect(() => {
+        const requests = props.session.agentState?.requests ?? {}
+        const ids = new Set(Object.keys(requests))
+        setPendingPermissionRequestIds(props.session.id, ids)
+        return () => {
+            setPendingPermissionRequestIds(props.session.id, new Set())
+        }
+    }, [props.session.agentState?.requests, props.session.id])
+
+    // Auto-flush and scroll to bottom when a permission prompt is detected in the pending queue.
+    useEffect(() => {
+        if (props.hasPendingPermissionPrompt) {
+            props.onFlushPending()
+            setForceScrollToken((t) => t + 1)
+        }
+    }, [props.hasPendingPermissionPrompt, props.onFlushPending])
 
     const handleVoiceToggle = useCallback(async () => {
         if (!voice) return
@@ -254,6 +283,22 @@ export function SessionChat(props: {
         props.onRefresh()
     }, [switchSession, props.onRefresh])
 
+    const handleExitSession = useCallback(() => {
+        void exitSession({
+            onDeleted: () => {
+                props.onBack()
+            },
+            onError: (error) => {
+                addToast({
+                    title: 'Failed to exit session',
+                    body: error.message,
+                    sessionId: props.session.id,
+                    url: ''
+                })
+            }
+        })
+    }, [addToast, exitSession, props.onBack, props.session.id])
+
     const handleViewFiles = useCallback(() => {
         navigate({
             to: '/sessions/$sessionId/files',
@@ -270,6 +315,11 @@ export function SessionChat(props: {
 
     const handleSend = useCallback((text: string, attachments?: AttachmentMetadata[]) => {
         const trimmed = text.trim()
+
+        if (isExitSlashCommand(trimmed)) {
+            handleExitSession()
+            return
+        }
 
         // Intercept /mcp to show native MCP info dialog alongside Claude's response
         if (trimmed === '/mcp' || trimmed.startsWith('/mcp ')) {
@@ -289,7 +339,7 @@ export function SessionChat(props: {
 
         props.onSend(text, attachments)
         setForceScrollToken((token) => token + 1)
-    }, [props.onSend, agentFlavor, handleModelModeChange])
+    }, [props.onSend, agentFlavor, handleExitSession, handleModelModeChange])
 
     const attachmentAdapter = useMemo(() => {
         if (!props.session.active) {
@@ -320,6 +370,10 @@ export function SessionChat(props: {
                 onSessionDeleted={props.onBack}
             />
 
+            <SessionBeadPanel beads={beads} stale={beadsStale} />
+
+            <SessionTodoPanel todos={props.session.todos} />
+
             {devViewOpen ? (
                 <div className="flex-1 min-h-0">
                     <DevMessageStream messages={props.messages} />
@@ -333,6 +387,16 @@ export function SessionChat(props: {
                             </div>
                         </div>
                     ) : null}
+
+                    <IntroCard
+                        flavor={props.session.metadata?.flavor}
+                        permissionMode={props.session.permissionMode}
+                        modelMode={props.session.modelMode}
+                        path={props.session.metadata?.path}
+                        worktree={props.session.metadata?.worktree}
+                        startedBy={props.session.metadata?.startedBy}
+                        startedFromRunner={props.session.metadata?.startedFromRunner}
+                    />
 
                     <AssistantRuntimeProvider runtime={runtime}>
                         <div className="relative flex min-h-0 flex-1 flex-col">
@@ -356,9 +420,11 @@ export function SessionChat(props: {
                                 normalizedMessagesCount={normalizedMessages.length}
                                 messagesVersion={props.messagesVersion}
                                 forceScrollToken={forceScrollToken}
+                                hasPendingPermissionPrompt={props.hasPendingPermissionPrompt}
                             />
 
                             <HappyComposer
+                                sessionId={props.session.id}
                                 disabled={props.isSending}
                                 permissionMode={props.session.permissionMode}
                                 modelMode={props.session.modelMode}
@@ -366,6 +432,7 @@ export function SessionChat(props: {
                                 active={props.session.active}
                                 allowSendWhenInactive
                                 thinking={props.session.thinking}
+                                thinkingActivity={props.session.thinkingActivity}
                                 agentState={props.session.agentState}
                                 contextSize={reduced.latestUsage?.contextSize}
                                 controlledByUser={props.session.agentState?.controlledByUser === true}

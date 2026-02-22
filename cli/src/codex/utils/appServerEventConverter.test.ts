@@ -130,6 +130,80 @@ describe('AppServerEventConverter', () => {
         expect(completed).toEqual([{ type: 'agent_message', message: 'Hello world' }]);
     });
 
+    it('emits item_activity when mcptoolcall starts', () => {
+        const converter = new AppServerEventConverter();
+
+        const started = converter.handleNotification('item/started', {
+            item: { id: 'mcp-1', type: 'mcpToolCall' }
+        });
+        expect(started).toEqual([{
+            type: 'item_activity',
+            item_type: 'mcptoolcall',
+            item_id: 'mcp-1'
+        }]);
+
+        const completed = converter.handleNotification('item/completed', {
+            item: { id: 'mcp-1', type: 'mcpToolCall' }
+        });
+        expect(completed).toEqual([]);
+    });
+
+    it('emits item_activity when websearch starts', () => {
+        const converter = new AppServerEventConverter();
+
+        const started = converter.handleNotification('item/started', {
+            item: { id: 'web-1', type: 'webSearch' }
+        });
+        expect(started).toEqual([{
+            type: 'item_activity',
+            item_type: 'websearch',
+            item_id: 'web-1'
+        }]);
+
+        const completed = converter.handleNotification('item/completed', {
+            item: { id: 'web-1', type: 'webSearch' }
+        });
+        expect(completed).toEqual([]);
+    });
+
+    it('emits item_activity on agentMessage start and agent_message on completion', () => {
+        const converter = new AppServerEventConverter();
+
+        const started = converter.handleNotification('item/started', {
+            item: { id: 'msg-2', type: 'agentMessage' }
+        });
+        expect(started).toEqual([{
+            type: 'item_activity',
+            item_type: 'agentmessage',
+            item_id: 'msg-2'
+        }]);
+
+        converter.handleNotification('item/agentMessage/delta', { itemId: 'msg-2', delta: 'done' });
+        const completed = converter.handleNotification('item/completed', {
+            item: { id: 'msg-2', type: 'agentMessage' }
+        });
+        expect(completed).toEqual([{ type: 'agent_message', message: 'done' }]);
+    });
+
+    it('emits item_activity on reasoning start and agent_reasoning on completion', () => {
+        const converter = new AppServerEventConverter();
+
+        const started = converter.handleNotification('item/started', {
+            item: { id: 'r-2', type: 'reasoning' }
+        });
+        expect(started).toEqual([{
+            type: 'item_activity',
+            item_type: 'reasoning',
+            item_id: 'r-2'
+        }]);
+
+        converter.handleNotification('item/reasoning/textDelta', { itemId: 'r-2', delta: 'think' });
+        const completed = converter.handleNotification('item/completed', {
+            item: { id: 'r-2', type: 'reasoning' }
+        });
+        expect(completed).toEqual([{ type: 'agent_reasoning', text: 'think' }]);
+    });
+
     it('dedupes duplicate wrapped + direct completion for same agent message item', () => {
         const converter = new AppServerEventConverter();
 
@@ -219,6 +293,35 @@ describe('AppServerEventConverter', () => {
             info: null,
             rate_limits: { primary: { used_percent: 10 } }
         }]);
+    });
+
+    it('maps codex/event/task_started to task_started', () => {
+        const converter = new AppServerEventConverter();
+
+        const events = converter.handleNotification('codex/event/task_started', {
+            msg: { type: 'task_started', turn_id: 'turn-1' }
+        });
+        expect(events).toEqual([{ type: 'task_started', turn_id: 'turn-1' }]);
+    });
+
+    it('maps codex/event/task_complete to codex_step_complete (not task_complete)', () => {
+        const converter = new AppServerEventConverter();
+
+        const events = converter.handleNotification('codex/event/task_complete', {
+            msg: { type: 'task_complete', turn_id: 'turn-1' }
+        });
+        // Should NOT produce task_complete — that would prematurely clear thinking
+        expect(events).toEqual([{ type: 'codex_step_complete' }]);
+        expect(events.find(e => e.type === 'task_complete')).toBeUndefined();
+    });
+
+    it('turn/completed still produces task_complete (authoritative turn end)', () => {
+        const converter = new AppServerEventConverter();
+
+        const events = converter.handleNotification('turn/completed', {
+            turn: { id: 'turn-1' }, status: 'Completed'
+        });
+        expect(events).toEqual([{ type: 'task_complete', turn_id: 'turn-1' }]);
     });
 
     it('accumulates file-change output deltas', () => {

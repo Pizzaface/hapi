@@ -1,0 +1,121 @@
+name: PR Checks
+
+on:
+    pull_request:
+        types: [opened, synchronize, reopened, edited]
+
+jobs:
+    ui-screenshot-policy:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Enforce screenshot evidence for UI PRs
+              uses: actions/github-script@v7
+              with:
+                  script: |
+                      const pr = context.payload.pull_request;
+                      if (!pr) {
+                          core.info('Not a pull_request event; skipping.');
+                          return;
+                      }
+
+                      const files = await github.paginate(github.rest.pulls.listFiles, {
+                          owner: context.repo.owner,
+                          repo: context.repo.repo,
+                          pull_number: pr.number,
+                          per_page: 100
+                      });
+
+                      const uiFilePatterns = [
+                          /^web\/src\//,
+                          /^web\/public\//,
+                          /^web\/index\.html$/,
+                          /^web\/tailwind\.config\.[jt]s$/,
+                          /^web\/postcss\.config\.[cm]?js$/,
+                          /^web\/.*\.(css|scss|sass|less)$/
+                      ];
+
+                      const uiFiles = files
+                          .map((file) => file.filename)
+                          .filter((filename) => uiFilePatterns.some((pattern) => pattern.test(filename)));
+
+                      if (uiFiles.length === 0) {
+                          core.info('No UI-related files changed; screenshot check not required.');
+                          return;
+                      }
+
+                      const MIN_NO_UI_EXPLANATION_LENGTH = 12;
+                      const body = (pr.body ?? '').replace(/<!--[\s\S]*?-->/g, '');
+                      const hasImageMarkdown = /!\[[^\]]*]\([^)]+\)/.test(body);
+                      const hasHtmlImage = /<img\s+[^>]*src=/i.test(body);
+                      const hasMediaLink = /(user-attachments\/assets\/|https?:\/\/\S+\.(png|jpe?g|gif|webp|mp4|webm|mov))/i.test(body);
+                      const hasNoUiOverride = /-\s*\[[xX]\]\s*no visual\/ui changes/i.test(body)
+                          || /-\s*\[[xX]\]\s*no ui changes/i.test(body);
+                      const noUiExplanationMatch = body.match(
+                          /(?:^|\n)\s*(?:[-*]\s*)?(?:No visual\/UI changes explanation|No UI changes explanation)\s*[:\-]\s*(.+)$/im
+                      );
+                      const noUiExplanation = noUiExplanationMatch?.[1]?.trim() ?? '';
+                      const hasNoUiExplanation = noUiExplanation.length >= MIN_NO_UI_EXPLANATION_LENGTH;
+                      const hasScreenshotEvidence = hasImageMarkdown || hasHtmlImage || hasMediaLink;
+
+                      if (hasNoUiOverride && !hasNoUiExplanation) {
+                          core.setFailed(
+                              `UI-related files changed and "No visual/UI changes" is checked, ` +
+                              `but no explanation was provided.\n\n` +
+                              `Add a line like:\n` +
+                              `No visual/UI changes explanation: <why this is non-visual>`
+                          );
+                          return;
+                      }
+
+                      if (hasScreenshotEvidence || hasNoUiOverride) {
+                          // Verify screenshot URLs are accessible (catch dead release assets)
+                          if (hasScreenshotEvidence) {
+                              const urlPattern = /https:\/\/github\.com\/[^\s)]+\.(?:png|jpe?g|gif|webp)/gi;
+                              const urls = [...new Set(body.match(urlPattern) ?? [])];
+                              const broken = [];
+                              for (const url of urls) {
+                                  try {
+                                      const resp = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(10000) });
+                                      if (!resp.ok) broken.push(`${url} (${resp.status})`);
+                                  } catch (err) {
+                                      broken.push(`${url} (network error)`);
+                                  }
+                              }
+                              if (broken.length > 0) {
+                                  core.warning(
+                                      `Screenshot URL(s) may be broken:\n` +
+                                      broken.map(u => `- ${u}`).join('\n') + '\n\n' +
+                                      `Verify the release assets exist and are publicly accessible.`
+                                  );
+                              }
+                          }
+                          core.info('Screenshot policy check passed.');
+                          return;
+                      }
+
+                      const examples = uiFiles.slice(0, 8).map((filename) => `- ${filename}`).join('\n');
+                      core.setFailed(
+                          `UI-related files changed but PR body has no screenshot evidence.\n\n` +
+                          `Changed UI files (sample):\n${examples}\n\n` +
+                          `Add screenshot(s)/recording(s), or check "No visual/UI changes" and include ` +
+                          `"No visual/UI changes explanation: ...".`
+                      );
+
+    build:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: oven-sh/setup-bun@v2
+            - run: bun install
+            - name: Build web app
+              env:
+                  VITE_REQUIRE_HUB_URL: '1'
+              run: bun run --cwd web build
+
+    dependency-review:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/dependency-review-action@v4
+              with:
+                  fail-on-severity: high

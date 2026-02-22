@@ -1,10 +1,16 @@
 import { useState, useRef, useEffect } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import type { TeamGroupStyle } from '@/types/api'
 import { useTranslation, type Locale } from '@/lib/use-translation'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { useAppContext } from '@/lib/app-context'
+import { queryKeys } from '@/lib/query-keys'
 import { getElevenLabsSupportedLanguages, getLanguageDisplayName, type Language } from '@/lib/languages'
 import { getFontScaleOptions, useFontScale, type FontScale } from '@/hooks/useFontScale'
-import { isReadyAnnouncementsEnabled, setReadyAnnouncementsEnabled } from '@/lib/settings'
+import {
+    isReadyAnnouncementsEnabled, setReadyAnnouncementsEnabled,
+    isPermissionNotificationsEnabled, setPermissionNotificationsEnabled
+} from '@/lib/settings'
 import { PROTOCOL_VERSION } from '@hapi/protocol'
 
 const locales: { value: Locale; nativeLabel: string }[] = [
@@ -71,8 +77,42 @@ function ChevronDownIcon(props: { className?: string }) {
     )
 }
 
+type ToggleProps = {
+    enabled: boolean
+    disabled?: boolean
+    onChange: () => void
+    label: string
+    sublabel?: string
+    ariaChecked?: boolean
+}
+
+function Toggle({ enabled, disabled = false, onChange, label, sublabel }: ToggleProps) {
+    return (
+        <button
+            type="button"
+            onClick={disabled ? undefined : onChange}
+            disabled={disabled}
+            className={`flex w-full items-center justify-between px-3 py-3 text-left transition-colors ${disabled ? 'cursor-not-allowed opacity-50' : 'hover:bg-[var(--app-subtle-bg)]'}`}
+            role="switch"
+            aria-checked={enabled}
+            aria-disabled={disabled}
+        >
+            <span className="flex flex-col">
+                <span className={disabled ? 'text-[var(--app-hint)]' : 'text-[var(--app-fg)]'}>{label}</span>
+                {sublabel && (
+                    <span className="text-xs text-[var(--app-hint)]">{sublabel}</span>
+                )}
+            </span>
+            <span className={`inline-flex h-5 w-9 items-center rounded-full transition-colors ${enabled ? 'bg-[var(--app-link)]' : 'bg-[var(--app-border)]'}`}>
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+            </span>
+        </button>
+    )
+}
+
 export default function SettingsPage() {
     const { api } = useAppContext()
+    const queryClient = useQueryClient()
     const { t, locale, setLocale } = useTranslation()
     const goBack = useAppGoBack()
     const [isOpen, setIsOpen] = useState(false)
@@ -87,12 +127,21 @@ export default function SettingsPage() {
     const [voiceLanguage, setVoiceLanguage] = useState<string | null>(() => {
         return localStorage.getItem('hapi-voice-lang')
     })
-    const [readyAnnouncementsEnabled, setReadyAnnouncementsEnabledState] = useState<boolean>(() => isReadyAnnouncementsEnabled())
+    const [readyIdleEnabled, setReadyIdleEnabledState] = useState<boolean>(() => isReadyAnnouncementsEnabled())
+    const [permissionNotificationsEnabled, setPermissionNotificationsEnabledState] = useState<boolean>(
+        () => isPermissionNotificationsEnabled()
+    )
+    const [teamGroupStyle, setTeamGroupStyleState] = useState<TeamGroupStyle>('card')
+    const [isTeamStyleOpen, setIsTeamStyleOpen] = useState(false)
+    const teamStyleContainerRef = useRef<HTMLDivElement>(null)
 
     const fontScaleOptions = getFontScaleOptions()
     const currentLocale = locales.find((loc) => loc.value === locale)
     const currentFontScaleLabel = fontScaleOptions.find((opt) => opt.value === fontScale)?.label ?? '100%'
     const currentVoiceLanguage = voiceLanguages.find((lang) => lang.code === voiceLanguage)
+
+    // All enabled toggles are off warning (error notifications always disabled/coming soon, so not counted)
+    const allNotificationsOff = !readyIdleEnabled && !permissionNotificationsEnabled
 
     const handleLocaleChange = (newLocale: Locale) => {
         setLocale(newLocale)
@@ -114,12 +163,38 @@ export default function SettingsPage() {
         setIsVoiceOpen(false)
     }
 
-    const handleReadyAnnouncementsToggle = () => {
-        const next = !readyAnnouncementsEnabled
-        setReadyAnnouncementsEnabledState(next)
+    const handleReadyIdleToggle = () => {
+        const next = !readyIdleEnabled
+        const previous = readyIdleEnabled
+        setReadyIdleEnabledState(next)
         setReadyAnnouncementsEnabled(next)
         void api.updatePreferences({ readyAnnouncements: next }).catch(() => {
-            // Keep local preference even if sync fails
+            // Rollback on failure
+            setReadyIdleEnabledState(previous)
+            setReadyAnnouncementsEnabled(previous)
+        })
+    }
+
+    const handlePermissionNotificationsToggle = () => {
+        const next = !permissionNotificationsEnabled
+        const previous = permissionNotificationsEnabled
+        setPermissionNotificationsEnabledState(next)
+        setPermissionNotificationsEnabled(next)
+        void api.updatePreferences({ permissionNotifications: next }).catch(() => {
+            // Rollback on failure
+            setPermissionNotificationsEnabledState(previous)
+            setPermissionNotificationsEnabled(previous)
+        })
+    }
+
+    const handleTeamGroupStyleChange = (style: TeamGroupStyle) => {
+        const previous = teamGroupStyle
+        setTeamGroupStyleState(style)
+        setIsTeamStyleOpen(false)
+        void api.updatePreferences({ teamGroupStyle: style }).then(() => {
+            void queryClient.invalidateQueries({ queryKey: queryKeys.preferences })
+        }).catch(() => {
+            setTeamGroupStyleState(previous)
         })
     }
 
@@ -129,8 +204,13 @@ export default function SettingsPage() {
         void api.getPreferences()
             .then((preferences) => {
                 if (cancelled) return
-                setReadyAnnouncementsEnabledState(preferences.readyAnnouncements)
+                setReadyIdleEnabledState(preferences.readyAnnouncements)
                 setReadyAnnouncementsEnabled(preferences.readyAnnouncements)
+                setPermissionNotificationsEnabledState(preferences.permissionNotifications)
+                setPermissionNotificationsEnabled(preferences.permissionNotifications)
+                if (preferences.teamGroupStyle) {
+                    setTeamGroupStyleState(preferences.teamGroupStyle)
+                }
             })
             .catch(() => {
                 // Keep local fallback
@@ -143,7 +223,7 @@ export default function SettingsPage() {
 
     // Close dropdown when clicking outside
     useEffect(() => {
-        if (!isOpen && !isFontOpen && !isVoiceOpen) return
+        if (!isOpen && !isFontOpen && !isVoiceOpen && !isTeamStyleOpen) return
 
         const handleClickOutside = (event: MouseEvent) => {
             if (isOpen && containerRef.current && !containerRef.current.contains(event.target as Node)) {
@@ -155,27 +235,31 @@ export default function SettingsPage() {
             if (isVoiceOpen && voiceContainerRef.current && !voiceContainerRef.current.contains(event.target as Node)) {
                 setIsVoiceOpen(false)
             }
+            if (isTeamStyleOpen && teamStyleContainerRef.current && !teamStyleContainerRef.current.contains(event.target as Node)) {
+                setIsTeamStyleOpen(false)
+            }
         }
 
         document.addEventListener('mousedown', handleClickOutside)
         return () => document.removeEventListener('mousedown', handleClickOutside)
-    }, [isOpen, isFontOpen, isVoiceOpen])
+    }, [isOpen, isFontOpen, isVoiceOpen, isTeamStyleOpen])
 
     // Close on escape key
     useEffect(() => {
-        if (!isOpen && !isFontOpen && !isVoiceOpen) return
+        if (!isOpen && !isFontOpen && !isVoiceOpen && !isTeamStyleOpen) return
 
         const handleEscape = (event: KeyboardEvent) => {
             if (event.key === 'Escape') {
                 setIsOpen(false)
                 setIsFontOpen(false)
                 setIsVoiceOpen(false)
+                setIsTeamStyleOpen(false)
             }
         }
 
         document.addEventListener('keydown', handleEscape)
         return () => document.removeEventListener('keydown', handleEscape)
-    }, [isOpen, isFontOpen, isVoiceOpen])
+    }, [isOpen, isFontOpen, isVoiceOpen, isTeamStyleOpen])
 
     return (
         <div className="flex h-full flex-col">
@@ -247,18 +331,35 @@ export default function SettingsPage() {
                                 </div>
                             )}
                         </div>
-                        <button
-                            type="button"
-                            onClick={handleReadyAnnouncementsToggle}
-                            className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
-                            role="switch"
-                            aria-checked={readyAnnouncementsEnabled}
-                        >
-                            <span className="text-[var(--app-fg)]">{t('settings.voice.readyAnnouncements')}</span>
-                            <span className={`inline-flex h-5 w-9 items-center rounded-full transition-colors ${readyAnnouncementsEnabled ? 'bg-[var(--app-link)]' : 'bg-[var(--app-border)]'}`}>
-                                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${readyAnnouncementsEnabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                            </span>
-                        </button>
+                    </div>
+
+                    {/* Notifications section */}
+                    <div className="border-b border-[var(--app-divider)]">
+                        <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
+                            {t('settings.notifications.title')}
+                        </div>
+                        {allNotificationsOff && (
+                            <div className="mx-3 mb-2 rounded-md bg-[var(--app-warning-bg,#fef3c7)] px-3 py-2 text-xs text-[var(--app-warning-fg,#92400e)]">
+                                {t('settings.notifications.allDisabledWarning')}
+                            </div>
+                        )}
+                        <Toggle
+                            enabled={readyIdleEnabled}
+                            onChange={handleReadyIdleToggle}
+                            label={t('settings.notifications.readyIdle')}
+                        />
+                        <Toggle
+                            enabled={permissionNotificationsEnabled}
+                            onChange={handlePermissionNotificationsToggle}
+                            label={t('settings.notifications.permissionPrompts')}
+                        />
+                        <Toggle
+                            enabled={false}
+                            disabled
+                            onChange={() => {}}
+                            label={t('settings.notifications.errorNotifications')}
+                            sublabel={t('settings.notifications.errorNotifications.comingSoon')}
+                        />
                     </div>
 
                     {/* Display section */}
@@ -296,6 +397,64 @@ export default function SettingsPage() {
                                                 role="option"
                                                 aria-selected={isSelected}
                                                 onClick={() => handleFontScaleChange(opt.value)}
+                                                className={`flex items-center justify-between w-full px-3 py-2 text-base text-left transition-colors ${
+                                                    isSelected
+                                                        ? 'text-[var(--app-link)] bg-[var(--app-subtle-bg)]'
+                                                        : 'text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)]'
+                                                }`}
+                                            >
+                                                <span>{opt.label}</span>
+                                                {isSelected && (
+                                                    <span className="ml-2 text-[var(--app-link)]">
+                                                        <CheckIcon />
+                                                    </span>
+                                                )}
+                                            </button>
+                                        )
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Teams section */}
+                    <div className="border-b border-[var(--app-divider)]">
+                        <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
+                            {t('settings.teams.title')}
+                        </div>
+                        <div ref={teamStyleContainerRef} className="relative">
+                            <button
+                                type="button"
+                                onClick={() => setIsTeamStyleOpen(!isTeamStyleOpen)}
+                                className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
+                                aria-expanded={isTeamStyleOpen}
+                                aria-haspopup="listbox"
+                            >
+                                <span className="text-[var(--app-fg)]">{t('settings.teams.displayStyle')}</span>
+                                <span className="flex items-center gap-1 text-[var(--app-hint)]">
+                                    <span>{teamGroupStyle === 'card' ? t('settings.teams.style.card') : t('settings.teams.style.leftBorder')}</span>
+                                    <ChevronDownIcon className={`transition-transform ${isTeamStyleOpen ? 'rotate-180' : ''}`} />
+                                </span>
+                            </button>
+
+                            {isTeamStyleOpen && (
+                                <div
+                                    className="absolute right-3 top-full mt-1 min-w-[160px] rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] shadow-lg overflow-hidden z-50"
+                                    role="listbox"
+                                    aria-label={t('settings.teams.displayStyle')}
+                                >
+                                    {([
+                                        { value: 'card' as const, label: t('settings.teams.style.card') },
+                                        { value: 'left-border' as const, label: t('settings.teams.style.leftBorder') },
+                                    ]).map((opt) => {
+                                        const isSelected = teamGroupStyle === opt.value
+                                        return (
+                                            <button
+                                                key={opt.value}
+                                                type="button"
+                                                role="option"
+                                                aria-selected={isSelected}
+                                                onClick={() => handleTeamGroupStyleChange(opt.value)}
                                                 className={`flex items-center justify-between w-full px-3 py-2 text-base text-left transition-colors ${
                                                     isSelected
                                                         ? 'text-[var(--app-link)] bg-[var(--app-subtle-bg)]'

@@ -1,8 +1,7 @@
 name: Issue Auto Response
 
 on:
-  issues:
-    types: [opened, labeled]
+  workflow_dispatch: # disabled — enable manually if needed
 
 concurrency:
   group: issue-auto-response-${{ github.event.issue.number }}

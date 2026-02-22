@@ -70,6 +70,16 @@ export type RpcGitBranchesResponse = {
     branches: string[]
 }
 
+export type RpcDiscoveredAgent = {
+    name: string
+    description?: string
+    source: 'global' | 'project'
+}
+
+export type RpcListAgentsResponse = {
+    agents: RpcDiscoveredAgent[]
+}
+
 export class RpcGateway {
     constructor(
         private readonly io: Server,
@@ -200,6 +210,51 @@ export class RpcGateway {
             .filter(Boolean)
     }
 
+    async listAgents(machineId: string, directory: string): Promise<RpcDiscoveredAgent[]> {
+        const result = await this.machineRpc(machineId, 'list-agents', { directory }) as RpcListAgentsResponse | unknown
+
+        if (!result || typeof result !== 'object') {
+            throw new Error('Unexpected list-agents result')
+        }
+
+        const rawAgents = (result as RpcListAgentsResponse).agents
+        if (!Array.isArray(rawAgents)) {
+            throw new Error('Unexpected list-agents result')
+        }
+
+        const agents: RpcDiscoveredAgent[] = []
+        for (const rawAgent of rawAgents) {
+            if (!rawAgent || typeof rawAgent !== 'object') {
+                continue
+            }
+
+            const name = typeof (rawAgent as { name?: unknown }).name === 'string'
+                ? (rawAgent as { name: string }).name.trim()
+                : ''
+            if (!name) {
+                continue
+            }
+
+            const source = (rawAgent as { source?: unknown }).source
+            if (source !== 'global' && source !== 'project') {
+                continue
+            }
+
+            const descriptionValue = (rawAgent as { description?: unknown }).description
+            const description = typeof descriptionValue === 'string'
+                ? descriptionValue.trim()
+                : undefined
+
+            agents.push({
+                name,
+                description: description || undefined,
+                source
+            })
+        }
+
+        return agents.sort((left, right) => left.name.localeCompare(right.name))
+    }
+
     async getGitStatus(sessionId: string, cwd?: string): Promise<RpcCommandResponse> {
         return await this.sessionRpc(sessionId, 'git-status', { cwd }) as RpcCommandResponse
     }
@@ -272,15 +327,27 @@ export class RpcGateway {
         }
     }
 
-    private async sessionRpc(sessionId: string, method: string, params: unknown): Promise<unknown> {
-        return await this.rpcCall(`${sessionId}:${method}`, params)
+    async showSessionBeads(sessionId: string, beadIds: string[], timeoutMs: number = 10_000): Promise<unknown> {
+        return await this.sessionRpc(sessionId, 'beads.show', { beadIds }, timeoutMs)
     }
 
-    private async machineRpc(machineId: string, method: string, params: unknown): Promise<unknown> {
-        return await this.rpcCall(`${machineId}:${method}`, params)
+    async showMachineBeads(machineId: string, repoPath: string, beadIds: string[], timeoutMs: number = 10_000): Promise<unknown> {
+        return await this.machineRpc(machineId, 'beads.show', { repoPath, beadIds }, timeoutMs)
     }
 
-    private async rpcCall(method: string, params: unknown): Promise<unknown> {
+    async listSessionBeads(sessionId: string, timeoutMs: number = 10_000): Promise<unknown> {
+        return await this.sessionRpc(sessionId, 'beads.list', {}, timeoutMs)
+    }
+
+    private async sessionRpc(sessionId: string, method: string, params: unknown, timeoutMs: number = 30_000): Promise<unknown> {
+        return await this.rpcCall(`${sessionId}:${method}`, params, timeoutMs)
+    }
+
+    private async machineRpc(machineId: string, method: string, params: unknown, timeoutMs: number = 30_000): Promise<unknown> {
+        return await this.rpcCall(`${machineId}:${method}`, params, timeoutMs)
+    }
+
+    private async rpcCall(method: string, params: unknown, timeoutMs: number = 30_000): Promise<unknown> {
         const socketId = this.rpcRegistry.getSocketIdForMethod(method)
         if (!socketId) {
             throw new Error(`RPC handler not registered: ${method}`)
@@ -291,7 +358,7 @@ export class RpcGateway {
             throw new Error(`RPC socket disconnected: ${method}`)
         }
 
-        const response = await socket.timeout(30_000).emitWithAck('rpc-request', {
+        const response = await socket.timeout(timeoutMs).emitWithAck('rpc-request', {
             method,
             params: JSON.stringify(params)
         }) as unknown

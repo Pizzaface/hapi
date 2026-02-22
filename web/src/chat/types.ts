@@ -70,6 +70,13 @@ export type NormalizedAgentContent =
         uuid: string
         parentUUID: string | null
     }
+    | {
+        type: 'image'
+        mediaType: string
+        base64: string
+        uuid: string
+        parentUUID: string | null
+    }
     | ToolUse
     | ToolResult
     | { type: 'summary'; summary: string }
@@ -169,6 +176,16 @@ export type AgentEventBlock = {
     meta?: unknown
 }
 
+export type AgentImageBlock = {
+    kind: 'agent-image'
+    id: string
+    localId: string | null
+    createdAt: number
+    mediaType: string
+    base64: string
+    meta?: unknown
+}
+
 export type ToolCallBlock = {
     kind: 'tool-call'
     id: string
@@ -179,4 +196,4 @@ export type ToolCallBlock = {
     meta?: unknown
 }
 
-export type ChatBlock = UserTextBlock | AgentTextBlock | AgentReasoningBlock | CliOutputBlock | ToolCallBlock | AgentEventBlock
+export type ChatBlock = UserTextBlock | AgentTextBlock | AgentReasoningBlock | AgentImageBlock | CliOutputBlock | ToolCallBlock | AgentEventBlock

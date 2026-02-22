@@ -25,6 +25,7 @@ const EMPTY_STATE: MessageWindowState = {
     warning: null,
     atBottom: true,
     messagesVersion: 0,
+    hasPendingPermissionPrompt: false,
 }
 
 export function useMessages(api: ApiClient | null, sessionId: string | null): {
@@ -35,6 +36,7 @@ export function useMessages(api: ApiClient | null, sessionId: string | null): {
     hasMore: boolean
     pendingCount: number
     messagesVersion: number
+    hasPendingPermissionPrompt: boolean
     loadMore: () => Promise<unknown>
     refetch: () => Promise<unknown>
     flushPending: () => Promise<void>
@@ -104,6 +106,7 @@ export function useMessages(api: ApiClient | null, sessionId: string | null): {
         hasMore: state.hasMore,
         pendingCount: state.pendingCount,
         messagesVersion: state.messagesVersion,
+        hasPendingPermissionPrompt: state.hasPendingPermissionPrompt,
         loadMore,
         refetch,
         flushPending,

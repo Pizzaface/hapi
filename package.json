@@ -6,7 +6,7 @@
         "build:site": "bun run --cwd website build && bun run --cwd docs docs:build && cp -r docs/.vitepress/dist website/dist/public/docs",
         "dev": "concurrently \"bun run dev:hub\" \"bun run dev:web\" --kill-others-on-exit",
         "build": "bun run build:cli && bun run build:hub && bun run build:web",
-        "build:cli": "cd cli && bun run build",
+        "build:cli": "cd cli && bun run build:exe",
         "build:single-exe": "bun run download:tunwg && bun run build:web && (cd hub && bun run generate:embedded-web-assets) && (cd cli && bun run build:exe:allinone)",
         "build:single-exe:all": "bun run download:tunwg && bun run build:web && (cd hub && bun run generate:embedded-web-assets) && (cd cli && bun run build:exe:allinone:all)",
         "download:tunwg": "bun run hub/scripts/download-tunwg.ts",
@@ -14,7 +14,8 @@
         "build:web": "cd web && bun run build",
         "dev:hub": "cd hub && bun run dev",
         "dev:web": "cd web && bun run dev",
-        "typecheck": "bun run typecheck:cli && bun run typecheck:web && bun run typecheck:hub",
+        "typecheck": "bun run typecheck:shared && bun run typecheck:cli && bun run typecheck:web && bun run typecheck:hub",
+        "typecheck:shared": "cd shared && bun run typecheck",
         "typecheck:cli": "cd cli && bun run typecheck",
         "typecheck:hub": "cd hub && bun run typecheck",
         "typecheck:web": "cd web && bun run typecheck",
@@ -22,11 +23,15 @@
         "test:cli": "cd cli && bun run test",
         "test:hub": "cd hub && bun run test",
         "test:web": "cd web && bun run test",
+        "pr:ui-preflight": "bun scripts/pr-ui-evidence-preflight.ts",
         "clean-session": "bun run hub/scripts/cleanup-sessions.ts",
-        "release-all": "cd cli && bun run release-all"
+        "release-all": "cd cli && bun run release-all",
+        "rebuild": "bun scripts/rebuild.ts",
+        "ui-preview": "bun scripts/ui-preview.ts"
     },
     "devDependencies": {
         "concurrently": "^9.2.1",
+        "playwright": "^1.58.2",
         "react-devtools-core": "^7.0.1",
         "vite-plugin-pwa": "^1.2.0"
     }

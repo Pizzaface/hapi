@@ -2,15 +2,20 @@ import type { Database } from 'bun:sqlite'
 
 import type { StoredSession, VersionedUpdateResult } from './types'
 import {
+    deleteSessionBatch,
     deleteSession,
+    getChildSessions,
     getOrCreateSession,
     getSession,
     getSessionByNamespace,
     getSessions,
     getSessionsByNamespace,
+    setAcceptAllMessages,
+    setParentSessionId,
     setSessionTodos,
     updateSessionAgentState,
-    updateSessionMetadata
+    updateSessionMetadata,
+    updateSessionSortOrder
 } from './sessions'
 
 export class SessionStore {
@@ -20,8 +25,8 @@ export class SessionStore {
         this.db = db
     }
 
-    getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, namespace: string): StoredSession {
-        return getOrCreateSession(this.db, tag, metadata, agentState, namespace)
+    getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, namespace: string, parentSessionId?: string | null): StoredSession {
+        return getOrCreateSession(this.db, tag, metadata, agentState, namespace, parentSessionId)
     }
 
     updateSessionMetadata(
@@ -47,6 +52,10 @@ export class SessionStore {
         return setSessionTodos(this.db, id, todos, todosUpdatedAt, namespace)
     }
 
+    updateSessionSortOrder(id: string, sortOrder: string | null, namespace: string): boolean {
+        return updateSessionSortOrder(this.db, id, sortOrder, namespace)
+    }
+
     getSession(id: string): StoredSession | null {
         return getSession(this.db, id)
     }
@@ -65,5 +74,21 @@ export class SessionStore {
 
     deleteSession(id: string, namespace: string): boolean {
         return deleteSession(this.db, id, namespace)
+    }
+
+    deleteSessionBatch(ids: string[], namespace: string): number {
+        return deleteSessionBatch(this.db, ids, namespace)
+    }
+
+    setParentSessionId(id: string, parentSessionId: string | null, namespace: string): boolean {
+        return setParentSessionId(this.db, id, parentSessionId, namespace)
+    }
+
+    getChildSessions(parentSessionId: string, namespace: string): StoredSession[] {
+        return getChildSessions(this.db, parentSessionId, namespace)
+    }
+
+    setAcceptAllMessages(id: string, acceptAllMessages: boolean, namespace: string): boolean {
+        return setAcceptAllMessages(this.db, id, acceptAllMessages, namespace)
     }
 }

@@ -22,6 +22,11 @@ type SessionEndPayload = {
     time: number
 }
 
+type BeadLinkedPayload = {
+    sid: string
+    beadId: string
+}
+
 type ResolveSessionAccess = (sessionId: string) => AccessResult<StoredSession>
 
 type EmitAccessError = (scope: 'session' | 'machine', id: string, reason: AccessErrorReason) => void
@@ -47,17 +52,23 @@ const updateStateSchema = z.object({
     agentState: z.unknown().nullable()
 })
 
+const beadLinkedSchema = z.object({
+    sid: z.string(),
+    beadId: z.string().trim().min(1).max(128)
+})
+
 export type SessionHandlersDeps = {
     store: Store
     resolveSessionAccess: ResolveSessionAccess
     emitAccessError: EmitAccessError
     onSessionAlive?: (payload: SessionAlivePayload) => void
     onSessionEnd?: (payload: SessionEndPayload) => void
+    onBeadLinked?: (payload: BeadLinkedPayload) => void
     onWebappEvent?: (event: SyncEvent) => void
 }
 
 export function registerSessionHandlers(socket: CliSocketWithData, deps: SessionHandlersDeps): void {
-    const { store, resolveSessionAccess, emitAccessError, onSessionAlive, onSessionEnd, onWebappEvent } = deps
+    const { store, resolveSessionAccess, emitAccessError, onSessionAlive, onSessionEnd, onBeadLinked, onWebappEvent } = deps
 
     socket.on('message', (data: unknown) => {
         const parsed = messageSchema.safeParse(data)
@@ -219,6 +230,22 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
     }
 
     socket.on('update-state', handleUpdateState)
+
+
+    socket.on('bead-linked', (data: unknown) => {
+        const parsed = beadLinkedSchema.safeParse(data)
+        if (!parsed.success) {
+            return
+        }
+
+        const sessionAccess = resolveSessionAccess(parsed.data.sid)
+        if (!sessionAccess.ok) {
+            emitAccessError('session', parsed.data.sid, sessionAccess.reason)
+            return
+        }
+
+        onBeadLinked?.({ sid: parsed.data.sid, beadId: parsed.data.beadId })
+    })
 
     socket.on('session-alive', (data: SessionAlivePayload) => {
         if (!data || typeof data.sid !== 'string' || typeof data.time !== 'number') {

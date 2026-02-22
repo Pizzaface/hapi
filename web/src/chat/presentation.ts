@@ -82,7 +82,7 @@ export function getEventPresentation(event: AgentEvent): EventPresentation {
         return { icon: '📦', text: `Context compacted (saved ${formatted} tokens)` }
     }
     if (event.type === 'compact') {
-        return { icon: '📦', text: 'Conversation compacted' }
+        return { icon: '📦', text: 'Context compacted — conversation history was summarized to free up space' }
     }
     try {
         return { icon: null, text: JSON.stringify(event) }

@@ -3,7 +3,9 @@ import type {
     Session,
     SessionSummary,
     SyncEvent as ProtocolSyncEvent,
-    WorktreeMetadata
+    TeamSummary,
+    WorktreeMetadata,
+    BeadSummary
 } from '@hapi/protocol/types'
 
 export type {
@@ -14,8 +16,10 @@ export type {
     Session,
     SessionSummary,
     SessionSummaryMetadata,
+    TeamSummary,
     TodoItem,
-    WorktreeMetadata
+    WorktreeMetadata,
+    BeadSummary
 } from '@hapi/protocol/types'
 
 export type SessionMetadataSummary = {
@@ -62,6 +66,13 @@ export type AuthResponse = {
 
 export type SessionsResponse = { sessions: SessionSummary[] }
 export type SessionResponse = { session: Session }
+export type TeamsResponse = { teams: TeamSummary[] }
+export type SessionBeadsResponse = { beads: BeadSummary[]; stale: boolean }
+export type ClearInactiveSessionsOlderThan = '7d' | '30d' | 'all'
+export type ClearInactiveSessionsResponse = {
+    deleted: string[]
+    failed: string[]
+}
 export type MessagesResponse = {
     messages: DecryptedMessage[]
     page: {
@@ -75,9 +86,15 @@ export type MessagesResponse = {
 export type MachinesResponse = { machines: Machine[] }
 export type MachinePathsExistsResponse = { exists: Record<string, boolean> }
 export type MachineGitBranchesResponse = { branches: string[] }
+export type MachineAgent = {
+    name: string
+    description?: string
+    source: 'global' | 'project'
+}
+export type MachineAgentsResponse = { agents: MachineAgent[] }
 
 export type SpawnResponse =
-    | { type: 'success'; sessionId: string }
+    | { type: 'success'; sessionId: string; initialPromptDelivery?: 'delivered' | 'timed_out' }
     | { type: 'error'; message: string }
 
 export type GitCommandResponse = {
@@ -198,17 +215,37 @@ export type VisibilityPayload = {
     visibility: 'visible' | 'hidden'
 }
 
+export type TeamGroupStyle = 'card' | 'left-border'
+
 export type PreferencesResponse = {
     readyAnnouncements: boolean
+    permissionNotifications: boolean
+    errorNotifications: boolean
+    teamGroupStyle: TeamGroupStyle
 }
 
 export type UpdatePreferencesPayload = {
     readyAnnouncements?: boolean
+    permissionNotifications?: boolean
+    errorNotifications?: boolean
+    teamGroupStyle?: TeamGroupStyle
 }
 
 export type UpdatePreferencesResponse = {
     ok: boolean
     preferences: PreferencesResponse
+}
+
+export type SystemStats = {
+    cpuPercent: number
+    memUsedBytes: number
+    memTotalBytes: number
+}
+
+export type HealthResponse = {
+    status: string
+    protocolVersion?: number
+    system: SystemStats
 }
 
 export type SyncEvent = ProtocolSyncEvent

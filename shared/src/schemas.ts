@@ -89,13 +89,19 @@ export type AgentState = z.infer<typeof AgentStateSchema>
 export const TodoItemSchema = z.object({
     content: z.string(),
     status: z.enum(['pending', 'in_progress', 'completed']),
-    priority: z.enum(['high', 'medium', 'low']),
-    id: z.string()
+    priority: z.enum(['high', 'medium', 'low']).default('medium'),
+    id: z.string().default(''),
+    activeForm: z.string().optional()
 })
 
 export type TodoItem = z.infer<typeof TodoItemSchema>
 
-export const TodosSchema = z.array(TodoItemSchema)
+export const TodosSchema = z.array(TodoItemSchema).transform(items =>
+    items.map((item, i) => ({
+        ...item,
+        id: item.id || `todo-${i + 1}`
+    }))
+)
 
 export const AttachmentMetadataSchema = z.object({
     id: z.string(),
@@ -118,6 +124,10 @@ export const DecryptedMessageSchema = z.object({
 
 export type DecryptedMessage = z.infer<typeof DecryptedMessageSchema>
 
+export const THINKING_ACTIVITIES = ['compacting'] as const
+export const ThinkingActivitySchema = z.enum(THINKING_ACTIVITIES)
+export type ThinkingActivity = z.infer<typeof ThinkingActivitySchema>
+
 export const SessionSchema = z.object({
     id: z.string(),
     namespace: z.string(),
@@ -130,14 +140,25 @@ export const SessionSchema = z.object({
     metadataVersion: z.number(),
     agentState: AgentStateSchema.nullable(),
     agentStateVersion: z.number(),
+    sortOrder: z.string().nullable(),
     thinking: z.boolean(),
     thinkingAt: z.number(),
+    thinkingActivity: ThinkingActivitySchema.nullable().optional(),
     todos: TodosSchema.optional(),
     permissionMode: PermissionModeSchema.optional(),
-    modelMode: ModelModeSchema.optional()
+    modelMode: ModelModeSchema.optional(),
+    parentSessionId: z.string().nullable().optional(),
+    acceptAllMessages: z.boolean().optional()
 })
 
 export type Session = z.infer<typeof SessionSchema>
+
+export const InterAgentMessageSchema = z.object({
+    content: z.string().min(1).max(100_000),
+    hopCount: z.number().int().min(0).max(10).optional()
+})
+
+export type InterAgentMessage = z.infer<typeof InterAgentMessageSchema>
 
 const SessionEventBaseSchema = z.object({
     namespace: z.string().optional()
@@ -149,6 +170,11 @@ const SessionChangedSchema = SessionEventBaseSchema.extend({
 
 const MachineChangedSchema = SessionEventBaseSchema.extend({
     machineId: z.string()
+})
+
+const TeamEventBaseSchema = z.object({
+    namespace: z.string(),
+    teamId: z.string()
 })
 
 export const SyncEventSchema = z.discriminatedUnion('type', [
@@ -172,6 +198,10 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
         type: z.literal('machine-updated'),
         data: z.unknown().optional()
     }),
+    SessionChangedSchema.extend({
+        type: z.literal('beads-updated'),
+        version: z.number().int().nonnegative()
+    }),
     SessionEventBaseSchema.extend({
         type: z.literal('toast'),
         data: z.object({
@@ -187,6 +217,21 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
             status: z.string(),
             subscriptionId: z.string().optional()
         }).optional()
+    }),
+    TeamEventBaseSchema.extend({
+        type: z.literal('team:updated'),
+        data: z.unknown().optional()
+    }),
+    TeamEventBaseSchema.extend({
+        type: z.literal('team:deleted')
+    }),
+    TeamEventBaseSchema.extend({
+        type: z.literal('member-joined'),
+        sessionId: z.string()
+    }),
+    TeamEventBaseSchema.extend({
+        type: z.literal('member-left'),
+        sessionId: z.string()
     })
 ])
 

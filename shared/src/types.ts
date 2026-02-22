@@ -7,11 +7,14 @@ export type {
     Metadata,
     Session,
     SyncEvent,
+    ThinkingActivity,
     TodoItem,
     WorktreeMetadata
 } from './schemas'
+export type { BeadSummary } from './beads'
 
-export type { SessionSummary, SessionSummaryMetadata } from './sessionSummary'
+export type { SessionSummary, SessionSummaryMetadata, TeamSummary } from './sessionSummary'
+export type { SessionStatusKey, SessionStatusInput, TeamAggregateStatusKey, TeamAggregateStatusInput } from './sessionStatus'
 
 export type {
     AgentFlavor,

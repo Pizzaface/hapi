@@ -6,7 +6,10 @@ import { useSessionActions } from '@/hooks/mutations/useSessionActions'
 import { SessionActionMenu } from '@/components/SessionActionMenu'
 import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { resolveProvider } from '@/lib/providerTheme'
 import { useTranslation } from '@/lib/use-translation'
+import { useDrawerContext } from '@/lib/drawer-context'
+import { ProviderIcon } from './ProviderIcon'
 
 function getSessionTitle(session: Session): string {
     if (session.metadata?.name) {
@@ -59,6 +62,27 @@ function MoreVerticalIcon(props: { className?: string }) {
     )
 }
 
+function MenuIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <line x1="4" y1="6" x2="20" y2="6" />
+            <line x1="4" y1="12" x2="20" y2="12" />
+            <line x1="4" y1="18" x2="20" y2="18" />
+        </svg>
+    )
+}
+
 function CodeIcon(props: { className?: string }) {
     return (
         <svg
@@ -92,6 +116,7 @@ export function SessionHeader(props: {
     const { session, api, onSessionDeleted } = props
     const title = useMemo(() => getSessionTitle(session), [session])
     const worktreeBranch = session.metadata?.worktree?.branch
+    const providerDisplay = resolveProvider(session.metadata?.flavor)
 
     const [menuOpen, setMenuOpen] = useState(false)
     const [menuAnchorPoint, setMenuAnchorPoint] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
@@ -120,6 +145,8 @@ export function SessionHeader(props: {
         setMenuOpen((open) => !open)
     }
 
+    const drawerCtx = useDrawerContext()
+
     // In Telegram, don't render header (Telegram provides its own)
     if (isTelegramApp()) {
         return null
@@ -129,11 +156,23 @@ export function SessionHeader(props: {
         <>
             <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
                 <div className="mx-auto w-full max-w-content flex items-center gap-2 p-3">
-                    {/* Back button */}
+                    {/* Hamburger menu — mobile only, opens session list drawer */}
+                    {drawerCtx ? (
+                        <button
+                            type="button"
+                            onClick={drawerCtx.openDrawer}
+                            className="flex lg:hidden h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
+                            aria-label="Open session list"
+                            data-testid="drawer-hamburger"
+                        >
+                            <MenuIcon />
+                        </button>
+                    ) : null}
+                    {/* Back button — desktop only when drawer context available, always on mobile without drawer */}
                     <button
                         type="button"
                         onClick={props.onBack}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
+                        className={`flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)] ${drawerCtx ? 'hidden lg:flex' : ''}`}
                     >
                         <svg
                             xmlns="http://www.w3.org/2000/svg"
@@ -156,9 +195,11 @@ export function SessionHeader(props: {
                             {title}
                         </div>
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-[var(--app-hint)]">
-                            <span className="inline-flex items-center gap-1">
-                                <span aria-hidden="true">❖</span>
-                                {session.metadata?.flavor?.trim() || 'unknown'}
+                            <span className="inline-flex items-center gap-1.5">
+                                <ProviderIcon flavor={session.metadata?.flavor} />
+                                <span style={{ color: `var(${providerDisplay.colorVar})` }}>
+                                    {providerDisplay.label}
+                                </span>
                             </span>
                             <span>
                                 {t('session.item.modelMode')}: {session.modelMode || 'default'}

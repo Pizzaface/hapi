@@ -12,6 +12,8 @@ type SpawnInput = {
     sessionType?: 'simple' | 'worktree'
     worktreeName?: string
     worktreeBranch?: string
+    initialPrompt?: string
+    parentSessionId?: string
 }
 
 export function useSpawnSession(api: ApiClient | null): {
@@ -34,7 +36,9 @@ export function useSpawnSession(api: ApiClient | null): {
                 input.yolo,
                 input.sessionType,
                 input.worktreeName,
-                input.worktreeBranch
+                input.worktreeBranch,
+                input.initialPrompt,
+                input.parentSessionId
             )
         },
         onSuccess: () => {

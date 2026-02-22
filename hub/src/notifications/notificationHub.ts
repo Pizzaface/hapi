@@ -1,11 +1,12 @@
 import type { Session, SyncEngine, SyncEvent } from '../sync/syncEngine'
-import type { NotificationChannel, NotificationHubOptions } from './notificationTypes'
+import type { NotificationChannel, NotificationHubOptions, PreferencesStore } from './notificationTypes'
 import { extractMessageEventType } from './eventParsing'
 
 export class NotificationHub {
     private readonly channels: NotificationChannel[]
     private readonly readyCooldownMs: number
     private readonly permissionDebounceMs: number
+    private readonly preferencesStore: PreferencesStore | null
     private readonly lastKnownRequests: Map<string, Set<string>> = new Map()
     private readonly notificationDebounce: Map<string, NodeJS.Timeout> = new Map()
     private readonly lastReadyNotificationAt: Map<string, number> = new Map()
@@ -19,6 +20,7 @@ export class NotificationHub {
         this.channels = channels
         this.readyCooldownMs = options?.readyCooldownMs ?? 5000
         this.permissionDebounceMs = options?.permissionDebounceMs ?? 500
+        this.preferencesStore = options?.preferencesStore ?? null
         this.unsubscribeSyncEvents = this.syncEngine.subscribe((event) => {
             this.handleSyncEvent(event)
         })
@@ -92,6 +94,13 @@ export class NotificationHub {
         const newRequestIds = new Set(Object.keys(requests))
         const oldRequestIds = this.lastKnownRequests.get(session.id) || new Set()
 
+        // When permission notifications are disabled, don't track lastKnownRequests.
+        // This ensures that when re-enabled, any pending requests appear as "new" and trigger a notification.
+        const prefs = this.preferencesStore?.get(session.namespace)
+        if (prefs && !prefs.permissionNotifications) {
+            return
+        }
+
         let hasNewRequests = false
         for (const requestId of newRequestIds) {
             if (!oldRequestIds.has(requestId)) {
@@ -127,12 +136,22 @@ export class NotificationHub {
             return
         }
 
+        const prefs = this.preferencesStore?.get(session.namespace)
+        if (prefs && !prefs.permissionNotifications) {
+            return
+        }
+
         await this.notifyPermission(session)
     }
 
     private async sendReadyNotification(sessionId: string): Promise<void> {
         const session = this.getNotifiableSession(sessionId)
         if (!session) {
+            return
+        }
+
+        const prefs = this.preferencesStore?.get(session.namespace)
+        if (prefs && !prefs.readyAnnouncements) {
             return
         }
 

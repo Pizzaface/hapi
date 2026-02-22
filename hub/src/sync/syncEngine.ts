@@ -7,12 +7,14 @@
  * - No E2E encryption; data is stored as JSON in SQLite
  */
 
-import type { DecryptedMessage, ModelMode, PermissionMode, Session, SyncEvent } from '@hapi/protocol/types'
+import type { BeadSummary, DecryptedMessage, ModelMode, PermissionMode, Session, SyncEvent } from '@hapi/protocol/types'
 import type { Server } from 'socket.io'
 import type { Store } from '../store'
 import type { RpcRegistry } from '../socket/rpcRegistry'
 import type { SSEManager } from '../sse/sseManager'
 import { EventPublisher, type SyncEventListener } from './eventPublisher'
+import { BeadGateway } from './beadGateway'
+import { BeadService } from './beadService'
 import { MachineCache, type Machine } from './machineCache'
 import { MessageService } from './messageService'
 import {
@@ -50,13 +52,46 @@ export type ResumeSessionResult =
     | { type: 'success'; sessionId: string }
     | { type: 'error'; message: string; code: 'session_not_found' | 'access_denied' | 'no_machine_online' | 'resume_unavailable' | 'resume_failed' }
 
+export type SpawnSessionResult =
+    | { type: 'success'; sessionId: string; initialPromptDelivery?: 'delivered' | 'timed_out' }
+    | { type: 'error'; message: string }
+
+const EXIT_KILL_TIMEOUT_MS = 1_500
+
+export type RestartResult = {
+    sessionId: string
+    name: string | null
+    status: 'restarted' | 'skipped' | 'failed'
+    error?: string
+}
+
+export type SpawnSessionOptions = {
+    machineId: string
+    directory: string
+    agent?: 'claude' | 'codex' | 'gemini' | 'opencode'
+    model?: string
+    yolo?: boolean
+    sessionType?: 'simple' | 'worktree'
+    worktreeName?: string
+    worktreeBranch?: string
+    initialPrompt?: string
+    resumeSessionId?: string
+    teamId?: string
+    parentSessionId?: string
+    namespace?: string
+}
+
 export class SyncEngine {
+    private readonly store: Store
     private readonly eventPublisher: EventPublisher
     private readonly sessionCache: SessionCache
     private readonly machineCache: MachineCache
     private readonly messageService: MessageService
     private readonly rpcGateway: RpcGateway
+    private readonly beadGateway: BeadGateway
+    private readonly beadService: BeadService
     private inactivityTimer: NodeJS.Timeout | null = null
+    private teamSweepTimer: NodeJS.Timeout | null = null
 
     constructor(
         store: Store,
@@ -64,13 +99,23 @@ export class SyncEngine {
         rpcRegistry: RpcRegistry,
         sseManager: SSEManager
     ) {
+        this.store = store
         this.eventPublisher = new EventPublisher(sseManager, (event) => this.resolveNamespace(event))
         this.sessionCache = new SessionCache(store, this.eventPublisher)
         this.machineCache = new MachineCache(store, this.eventPublisher)
         this.messageService = new MessageService(store, io, this.eventPublisher)
         this.rpcGateway = new RpcGateway(io, rpcRegistry)
+        this.beadGateway = new BeadGateway(this.rpcGateway)
+        this.beadService = new BeadService({
+            store,
+            getSession: (sessionId) => this.getSession(sessionId),
+            getActiveSessions: () => this.sessionCache.getActiveSessions(),
+            gateway: this.beadGateway,
+            emitEvent: (event) => this.eventPublisher.emit(event)
+        })
         this.reloadAll()
         this.inactivityTimer = setInterval(() => this.expireInactive(), 5_000)
+        this.teamSweepTimer = setInterval(() => this.sweepExpiredTeams(), 300_000)
     }
 
     stop(): void {
@@ -78,6 +123,11 @@ export class SyncEngine {
             clearInterval(this.inactivityTimer)
             this.inactivityTimer = null
         }
+        if (this.teamSweepTimer) {
+            clearInterval(this.teamSweepTimer)
+            this.teamSweepTimer = null
+        }
+        this.beadService.stop()
     }
 
     subscribe(listener: SyncEventListener): () => void {
@@ -116,6 +166,10 @@ export class SyncEngine {
             return undefined
         }
         return session
+    }
+
+    async getSessionBeads(sessionId: string): Promise<{ beads: BeadSummary[]; stale: boolean }> {
+        return await this.beadService.getSessionBeads(sessionId)
     }
 
     resolveSessionAccess(
@@ -189,6 +243,10 @@ export class SyncEngine {
         this.eventPublisher.emit(event)
     }
 
+    emitEvent(event: SyncEvent): void {
+        this.eventPublisher.emit(event)
+    }
+
     handleSessionAlive(payload: {
         sid: string
         time: number
@@ -198,10 +256,16 @@ export class SyncEngine {
         modelMode?: ModelMode
     }): void {
         this.sessionCache.handleSessionAlive(payload)
+        this.updateTeamActivity(payload.sid)
     }
 
     handleSessionEnd(payload: { sid: string; time: number }): void {
         this.sessionCache.handleSessionEnd(payload)
+        this.checkTeamCleanupOnDisconnect(payload.sid)
+    }
+
+    handleBeadLinked(payload: { sid: string; beadId: string }): void {
+        this.beadService.linkBead(payload.sid, payload.beadId)
     }
 
     handleMachineAlive(payload: { machineId: string; time: number }): void {
@@ -213,13 +277,59 @@ export class SyncEngine {
         this.machineCache.expireInactive()
     }
 
+    private updateTeamActivity(sessionId: string): void {
+        const session = this.sessionCache.getSession(sessionId)
+        if (!session) return
+
+        const team = this.store.teams.getTeamForSession(sessionId, session.namespace)
+        if (!team) return
+
+        this.store.teams.updateLastActiveMemberAt(team.id, Date.now())
+    }
+
+    private checkTeamCleanupOnDisconnect(sessionId: string): void {
+        const session = this.sessionCache.getSession(sessionId)
+        if (!session) return
+
+        const team = this.store.teams.getTeamForSession(sessionId, session.namespace)
+        if (!team || team.persistent) return
+
+        // Check before updating — if the team is already expired and has no active members, delete it
+        const memberIds = this.store.teams.getTeamMembers(team.id, team.namespace)
+        const hasActiveMember = memberIds.some((memberId) => {
+            const memberSession = this.sessionCache.getSession(memberId)
+            return memberSession?.active === true
+        })
+
+        if (!hasActiveMember) {
+            const now = Date.now()
+            const lastActive = team.lastActiveMemberAt ?? team.createdAt
+            if ((now - lastActive) > team.ttlSeconds * 1000) {
+                console.log(`[SyncEngine] TTL cleanup: deleting expired temporary team "${team.name}" (${team.id})`)
+                this.store.teams.deleteTeam(team.id, team.namespace)
+                return
+            }
+        }
+
+        // Update lastActiveMemberAt so the sweep timer knows when this team was last active
+        this.store.teams.updateLastActiveMemberAt(team.id, Date.now())
+    }
+
+    private sweepExpiredTeams(): void {
+        const expiredTeams = this.store.teams.getExpiredTemporaryTeams(Date.now())
+        for (const team of expiredTeams) {
+            console.log(`[SyncEngine] TTL sweep: deleting expired temporary team "${team.name}" (${team.id})`)
+            this.store.teams.deleteTeam(team.id, team.namespace)
+        }
+    }
+
     private reloadAll(): void {
         this.sessionCache.reloadAll()
         this.machineCache.reloadAll()
     }
 
-    getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, namespace: string): Session {
-        return this.sessionCache.getOrCreateSession(tag, metadata, agentState, namespace)
+    getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, namespace: string, parentSessionId?: string | null): Session {
+        return this.sessionCache.getOrCreateSession(tag, metadata, agentState, namespace, parentSessionId)
     }
 
     getOrCreateMachine(id: string, metadata: unknown, runnerState: unknown, namespace: string): Machine {
@@ -239,10 +349,70 @@ export class SyncEngine {
                 path: string
                 previewUrl?: string
             }>
-            sentFrom?: 'telegram-bot' | 'webapp'
+            sentFrom?: 'telegram-bot' | 'webapp' | 'spawn'
         }
     ): Promise<void> {
         await this.messageService.sendMessage(sessionId, payload)
+    }
+
+    async sendInterAgentMessage(
+        senderSessionId: string,
+        targetSessionId: string,
+        content: string,
+        namespace: string,
+        hopCount: number = 0
+    ): Promise<
+        | { status: 'delivered'; messageId: string }
+        | { status: 'queued'; messageId: string }
+        | { status: 'error'; code: string; message: string }
+    > {
+        if (content.length > 100_000) {
+            return { status: 'error', code: 'message_too_large', message: 'Message exceeds 100KB limit' }
+        }
+
+        if (hopCount > 10) {
+            return { status: 'error', code: 'hop_limit_exceeded', message: 'Message exceeded maximum hop count' }
+        }
+
+        const senderSession = this.getSessionByNamespace(senderSessionId, namespace)
+        if (!senderSession) {
+            return { status: 'error', code: 'sender_not_found', message: 'Sender session not found' }
+        }
+
+        const targetSession = this.getSessionByNamespace(targetSessionId, namespace)
+        if (!targetSession) {
+            return { status: 'error', code: 'target_not_found', message: 'Target session not found' }
+        }
+
+        // Auth cascade:
+        // 1. Sender ownership validated above
+        // 2. Target has acceptAllMessages → allow
+        const targetStored = this.store.sessions.getSession(targetSessionId)
+        if (!targetStored?.acceptAllMessages) {
+            // 3. Direct parent-child relationship → allow
+            const isParentOfTarget = targetSession.parentSessionId === senderSessionId
+            const isChildOfSender = senderSession.parentSessionId === targetSessionId
+            if (!isParentOfTarget && !isChildOfSender) {
+                // 4. Same team → allow
+                if (!this.store.teams.areInSameTeam(senderSessionId, targetSessionId, namespace)) {
+                    return { status: 'error', code: 'not_authorized', message: 'Sender is not authorized to message this session' }
+                }
+            }
+        }
+
+        const senderName = senderSession.metadata?.name ?? senderSessionId
+        const text = `[Inter-agent message from ${senderName} (${senderSessionId})]\n\n${content}`
+
+        const messageId = await this.messageService.sendMessage(targetSessionId, {
+            text,
+            sentFrom: 'inter-agent'
+        })
+
+        const isActive = targetSession.active
+        return {
+            status: isActive ? 'delivered' : 'queued',
+            messageId
+        }
     }
 
     async approvePermission(
@@ -281,8 +451,52 @@ export class SyncEngine {
         await this.sessionCache.renameSession(sessionId, name)
     }
 
+    async updateSessionSortOrder(sessionId: string, sortOrder: string): Promise<void> {
+        await this.sessionCache.updateSessionSortOrder(sessionId, sortOrder)
+    }
+
     async deleteSession(sessionId: string): Promise<void> {
         await this.sessionCache.deleteSession(sessionId)
+    }
+
+    async exitSession(sessionId: string): Promise<void> {
+        const killAttempt = this.rpcGateway.killSession(sessionId).catch(() => {})
+        const killTimeout = new Promise<void>((resolve) => {
+            setTimeout(resolve, EXIT_KILL_TIMEOUT_MS)
+        })
+        await Promise.race([killAttempt, killTimeout])
+
+        try {
+            await this.sessionCache.deleteSession(sessionId)
+            return
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            if (message.includes('not found')) {
+                return
+            }
+            if (!message.includes('active')) {
+                throw error
+            }
+        }
+
+        this.handleSessionEnd({ sid: sessionId, time: Date.now() })
+
+        try {
+            await this.sessionCache.deleteSession(sessionId)
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            if (message.includes('not found')) {
+                return
+            }
+            throw error
+        }
+    }
+
+    async clearInactiveSessions(
+        namespace: string,
+        olderThanMs?: number
+    ): Promise<{ deleted: string[]; failed: string[] }> {
+        return await this.sessionCache.clearInactiveSessions(namespace, olderThanMs)
     }
 
     async applySessionConfig(
@@ -305,18 +519,151 @@ export class SyncEngine {
         this.sessionCache.applySessionConfig(sessionId, applied)
     }
 
-    async spawnSession(
-        machineId: string,
-        directory: string,
-        agent: 'claude' | 'codex' | 'gemini' | 'opencode' = 'claude',
-        model?: string,
-        yolo?: boolean,
-        sessionType?: 'simple' | 'worktree',
-        worktreeName?: string,
-        worktreeBranch?: string,
-        resumeSessionId?: string
-    ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
-        return await this.rpcGateway.spawnSession(machineId, directory, agent, model, yolo, sessionType, worktreeName, worktreeBranch, resumeSessionId)
+    async spawnSession(opts: SpawnSessionOptions): Promise<SpawnSessionResult> {
+        const {
+            machineId,
+            directory,
+            agent = 'claude',
+            model,
+            yolo,
+            sessionType,
+            worktreeName,
+            worktreeBranch,
+            initialPrompt,
+            resumeSessionId,
+            teamId,
+            parentSessionId,
+            namespace
+        } = opts
+
+        const spawnResult = await this.rpcGateway.spawnSession(
+            machineId,
+            directory,
+            agent,
+            model,
+            yolo,
+            sessionType,
+            worktreeName,
+            worktreeBranch,
+            resumeSessionId
+        )
+        if (spawnResult.type !== 'success') {
+            return spawnResult
+        }
+
+        const normalizedPrompt = typeof initialPrompt === 'string' ? initialPrompt.trim() : ''
+        const needsPromptDelivery = normalizedPrompt.length > 0
+        const needsTeamJoin = typeof teamId === 'string' && teamId.length > 0 && typeof namespace === 'string'
+        const needsParentLink = typeof parentSessionId === 'string' && parentSessionId.length > 0 && typeof namespace === 'string'
+
+        if (needsParentLink) {
+            this.trySetParentSession(spawnResult.sessionId, parentSessionId!, namespace!)
+        }
+
+        if (!needsPromptDelivery && !needsTeamJoin) {
+            return spawnResult
+        }
+
+        const becameActive = await this.waitForSessionActive(spawnResult.sessionId, 15_000)
+
+        if (needsTeamJoin) {
+            this.tryJoinTeam(teamId!, spawnResult.sessionId, namespace!)
+        }
+
+        if (!needsPromptDelivery) {
+            return spawnResult
+        }
+
+        if (!becameActive) {
+            console.warn(`[SyncEngine] Initial prompt delivery timed out for session ${spawnResult.sessionId}`)
+            return {
+                type: 'success',
+                sessionId: spawnResult.sessionId,
+                initialPromptDelivery: 'timed_out'
+            }
+        }
+
+        try {
+            await this.messageService.sendMessage(spawnResult.sessionId, {
+                text: normalizedPrompt,
+                sentFrom: 'spawn'
+            })
+            return {
+                type: 'success',
+                sessionId: spawnResult.sessionId,
+                initialPromptDelivery: 'delivered'
+            }
+        } catch (error) {
+            console.warn(
+                `[SyncEngine] Failed to deliver initial prompt for session ${spawnResult.sessionId}: ${error instanceof Error ? error.message : String(error)}`
+            )
+            return {
+                type: 'success',
+                sessionId: spawnResult.sessionId,
+                initialPromptDelivery: 'timed_out'
+            }
+        }
+    }
+
+    private tryJoinTeam(teamId: string, sessionId: string, namespace: string): void {
+        const MAX_ATTEMPTS = 3
+        const DELAY_MS = 500
+
+        const attempt = (n: number) => {
+            try {
+                const joined = this.store.teams.addMember(teamId, sessionId, namespace)
+                if (joined) {
+                    return
+                }
+            } catch (error) {
+                console.warn(
+                    `[SyncEngine] Team join attempt ${n}/${MAX_ATTEMPTS} threw for session ${sessionId} → team ${teamId}: ${error instanceof Error ? error.message : String(error)}`
+                )
+            }
+
+            if (n < MAX_ATTEMPTS) {
+                console.warn(
+                    `[SyncEngine] Team join attempt ${n}/${MAX_ATTEMPTS} failed for session ${sessionId} → team ${teamId}. Retrying in ${DELAY_MS}ms…`
+                )
+                setTimeout(() => attempt(n + 1), DELAY_MS)
+                return
+            }
+            console.warn(
+                `[SyncEngine] Team join failed after ${MAX_ATTEMPTS} attempts for session ${sessionId} → team ${teamId}`
+            )
+        }
+        attempt(1)
+    }
+
+    private trySetParentSession(sessionId: string, parentSessionId: string, namespace: string): void {
+        const MAX_ATTEMPTS = 3
+        const DELAY_MS = 500
+
+        const attempt = (n: number) => {
+            try {
+                const updated = this.store.sessions.setParentSessionId(sessionId, parentSessionId, namespace)
+                if (updated) {
+                    this.sessionCache.refreshSession(sessionId)
+                    return
+                }
+            } catch (error) {
+                console.warn(
+                    `[SyncEngine] Parent session link attempt ${n}/${MAX_ATTEMPTS} threw for session ${sessionId} → parent ${parentSessionId}: ${error instanceof Error ? error.message : String(error)}`
+                )
+            }
+
+            if (n < MAX_ATTEMPTS) {
+                console.warn(
+                    `[SyncEngine] Parent session link attempt ${n}/${MAX_ATTEMPTS} failed for session ${sessionId} → parent ${parentSessionId}. Retrying in ${DELAY_MS}ms…`
+                )
+                setTimeout(() => attempt(n + 1), DELAY_MS)
+                return
+            }
+            console.warn(
+                `[SyncEngine] Parent session link failed after ${MAX_ATTEMPTS} attempts for session ${sessionId} → parent ${parentSessionId}`
+            )
+        }
+        attempt(1)
     }
 
     async resumeSession(sessionId: string, namespace: string): Promise<ResumeSessionResult> {
@@ -335,20 +682,12 @@ export class SyncEngine {
         }
 
         const metadata = session.metadata
-        if (!metadata || typeof metadata.path !== 'string') {
+        if (!metadata || typeof metadata.path !== 'string' || metadata.path.trim().length === 0) {
             return { type: 'error', message: 'Session metadata missing path', code: 'resume_unavailable' }
         }
 
-        const flavor = metadata.flavor === 'codex' || metadata.flavor === 'gemini' || metadata.flavor === 'opencode'
-            ? metadata.flavor
-            : 'claude'
-        const resumeToken = flavor === 'codex'
-            ? metadata.codexSessionId
-            : flavor === 'gemini'
-                ? metadata.geminiSessionId
-                : flavor === 'opencode'
-                    ? metadata.opencodeSessionId
-                    : metadata.claudeSessionId
+        const flavor = this.resolveSessionFlavor(metadata)
+        const resumeToken = this.resolveResumeToken(metadata, flavor)
 
         if (!resumeToken) {
             return { type: 'error', message: 'Resume session ID unavailable', code: 'resume_unavailable' }
@@ -408,6 +747,84 @@ export class SyncEngine {
         return { type: 'success', sessionId: spawnResult.sessionId }
     }
 
+    async restartSessions(namespace: string, opts: { sessionIds?: string[]; machineId?: string }): Promise<RestartResult[]> {
+        const sessionIdFilter = Array.isArray(opts.sessionIds) && opts.sessionIds.length > 0
+            ? new Set(opts.sessionIds)
+            : null
+
+        const sessions = this.sessionCache.getActiveSessions().filter((session) => {
+            if (session.namespace !== namespace) {
+                return false
+            }
+            if (opts.machineId && session.metadata?.machineId !== opts.machineId) {
+                return false
+            }
+            if (sessionIdFilter && !sessionIdFilter.has(session.id)) {
+                return false
+            }
+            return true
+        })
+
+        const results: RestartResult[] = []
+        for (const session of sessions) {
+            const metadata = session.metadata
+            const name = metadata?.name ?? null
+            const flavor = this.resolveSessionFlavor(metadata)
+            const resumeToken = this.resolveResumeToken(metadata, flavor)
+            const hasPath = typeof metadata?.path === 'string' && metadata.path.trim().length > 0
+            if (!hasPath || !resumeToken) {
+                results.push({
+                    sessionId: session.id,
+                    name,
+                    status: 'skipped',
+                    error: 'not_resumable'
+                })
+                continue
+            }
+
+            try {
+                await this.archiveSession(session.id)
+            } catch {
+                this.handleSessionEnd({ sid: session.id, time: Date.now() })
+            }
+
+            const stopped = await this.waitForSessionInactive(session.id, 10_000)
+            if (!stopped) {
+                results.push({
+                    sessionId: session.id,
+                    name,
+                    status: 'failed',
+                    error: 'session_did_not_stop'
+                })
+                continue
+            }
+
+            let resumeResult = await this.resumeSession(session.id, namespace)
+            if (resumeResult.type === 'error' && resumeResult.code === 'resume_failed') {
+                await this.sleep(2_000)
+                resumeResult = await this.resumeSession(session.id, namespace)
+            }
+
+            if (resumeResult.type === 'success') {
+                results.push({
+                    sessionId: session.id,
+                    name,
+                    status: 'restarted'
+                })
+                continue
+            }
+
+            results.push({
+                sessionId: session.id,
+                name,
+                status: 'failed',
+                error: resumeResult.code
+            })
+        }
+
+        return results
+    }
+
     async waitForSessionActive(sessionId: string, timeoutMs: number = 15_000): Promise<boolean> {
         const start = Date.now()
         while (Date.now() - start < timeoutMs) {
@@ -415,13 +832,68 @@ export class SyncEngine {
             if (session?.active) {
                 return true
             }
-            await new Promise((resolve) => setTimeout(resolve, 250))
+            await this.sleep(250)
         }
         return false
     }
 
+    private resolveSessionFlavor(metadata: Session['metadata'] | null): 'claude' | 'codex' | 'gemini' | 'opencode' {
+        if (metadata?.flavor === 'codex' || metadata?.flavor === 'gemini' || metadata?.flavor === 'opencode') {
+            return metadata.flavor
+        }
+        return 'claude'
+    }
+
+    private resolveResumeToken(
+        metadata: Session['metadata'] | null,
+        flavor: 'claude' | 'codex' | 'gemini' | 'opencode'
+    ): string | null {
+        if (!metadata) {
+            return null
+        }
+
+        const token = flavor === 'codex'
+            ? metadata.codexSessionId
+            : flavor === 'gemini'
+                ? metadata.geminiSessionId
+                : flavor === 'opencode'
+                    ? metadata.opencodeSessionId
+                    : metadata.claudeSessionId
+
+        if (typeof token !== 'string') {
+            return null
+        }
+
+        const trimmed = token.trim()
+        return trimmed.length > 0 ? trimmed : null
+    }
+
+    private async waitForSessionInactive(sessionId: string, timeoutMs: number): Promise<boolean> {
+        const start = Date.now()
+        while (Date.now() - start < timeoutMs) {
+            const session = this.getSession(sessionId)
+            if (!session?.active) {
+                return true
+            }
+            await this.sleep(250)
+        }
+        return false
+    }
+
+    private async sleep(ms: number): Promise<void> {
+        await new Promise((resolve) => setTimeout(resolve, ms))
+    }
+
     async checkPathsExist(machineId: string, paths: string[]): Promise<Record<string, boolean>> {
         return await this.rpcGateway.checkPathsExist(machineId, paths)
+    }
+
+    async listMachineAgents(machineId: string, directory: string): Promise<Array<{
+        name: string
+        description?: string
+        source: 'global' | 'project'
+    }>> {
+        return await this.rpcGateway.listAgents(machineId, directory)
     }
 
     async getMachineGitBranches(machineId: string, directory: string, limit?: number): Promise<string[]> {

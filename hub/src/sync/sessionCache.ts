@@ -1,5 +1,5 @@
 import { AgentStateSchema, MetadataSchema } from '@hapi/protocol/schemas'
-import type { ModelMode, PermissionMode, Session } from '@hapi/protocol/types'
+import type { ModelMode, PermissionMode, Session, ThinkingActivity } from '@hapi/protocol/types'
 import type { Store, StoredSession } from '../store'
 import { clampAliveTime } from './aliveTime'
 import { EventPublisher } from './eventPublisher'
@@ -55,8 +55,8 @@ export class SessionCache {
         return this.getSessions().filter((session) => session.active)
     }
 
-    getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, namespace: string): Session {
-        const stored = this.store.sessions.getOrCreateSession(tag, metadata, agentState, namespace)
+    getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, namespace: string, parentSessionId?: string | null): Session {
+        const stored = this.store.sessions.getOrCreateSession(tag, metadata, agentState, namespace, parentSessionId)
         return this.refreshSession(stored.id, stored) ?? (() => { throw new Error('Failed to load session') })()
     }
 
@@ -122,11 +122,15 @@ export class SessionCache {
             metadataVersion: stored.metadataVersion,
             agentState,
             agentStateVersion: stored.agentStateVersion,
+            sortOrder: stored.sortOrder,
             thinking: existing?.thinking ?? false,
             thinkingAt: existing?.thinkingAt ?? 0,
+            thinkingActivity: existing?.thinkingActivity ?? null,
             todos,
             permissionMode: existing?.permissionMode,
-            modelMode: existing?.modelMode
+            modelMode: existing?.modelMode,
+            parentSessionId: stored.parentSessionId,
+            acceptAllMessages: stored.acceptAllMessages || undefined
         }
 
         this.sessions.set(sessionId, session)
@@ -145,6 +149,7 @@ export class SessionCache {
         sid: string
         time: number
         thinking?: boolean
+        thinkingActivity?: ThinkingActivity | null
         mode?: 'local' | 'remote'
         permissionMode?: PermissionMode
         modelMode?: ModelMode
@@ -157,6 +162,7 @@ export class SessionCache {
 
         const wasActive = session.active
         const wasThinking = session.thinking
+        const previousThinkingActivity = session.thinkingActivity ?? null
         const previousPermissionMode = session.permissionMode
         const previousModelMode = session.modelMode
 
@@ -164,6 +170,12 @@ export class SessionCache {
         session.activeAt = Math.max(session.activeAt, t)
         session.thinking = Boolean(payload.thinking)
         session.thinkingAt = t
+        if (payload.thinkingActivity !== undefined) {
+            session.thinkingActivity = payload.thinkingActivity
+        }
+        if (!session.thinking) {
+            session.thinkingActivity = null
+        }
         if (payload.permissionMode !== undefined) {
             session.permissionMode = payload.permissionMode
         }
@@ -174,8 +186,10 @@ export class SessionCache {
         const now = Date.now()
         const lastBroadcastAt = this.lastBroadcastAtBySessionId.get(session.id) ?? 0
         const modeChanged = previousPermissionMode !== session.permissionMode || previousModelMode !== session.modelMode
+        const activityChanged = previousThinkingActivity !== (session.thinkingActivity ?? null)
         const shouldBroadcast = (!wasActive && session.active)
             || (wasThinking !== session.thinking)
+            || activityChanged
             || modeChanged
             || (now - lastBroadcastAt > 10_000)
 
@@ -187,6 +201,7 @@ export class SessionCache {
                 data: {
                     activeAt: session.activeAt,
                     thinking: session.thinking,
+                    thinkingActivity: session.thinkingActivity ?? null,
                     permissionMode: session.permissionMode,
                     modelMode: session.modelMode
                 }
@@ -206,9 +221,10 @@ export class SessionCache {
 
         session.active = false
         session.thinking = false
+        session.thinkingActivity = null
         session.thinkingAt = t
 
-        this.publisher.emit({ type: 'session-updated', sessionId: session.id, data: { active: false, thinking: false } })
+        this.publisher.emit({ type: 'session-updated', sessionId: session.id, data: { active: false, thinking: false, thinkingActivity: null } })
     }
 
     expireInactive(now: number = Date.now()): void {
@@ -219,7 +235,8 @@ export class SessionCache {
             if (now - session.activeAt <= sessionTimeoutMs) continue
             session.active = false
             session.thinking = false
-            this.publisher.emit({ type: 'session-updated', sessionId: session.id, data: { active: false } })
+            session.thinkingActivity = null
+            this.publisher.emit({ type: 'session-updated', sessionId: session.id, data: { active: false, thinking: false, thinkingActivity: null } })
         }
     }
 
@@ -267,6 +284,20 @@ export class SessionCache {
         this.refreshSession(sessionId)
     }
 
+    async updateSessionSortOrder(sessionId: string, sortOrder: string): Promise<void> {
+        const session = this.sessions.get(sessionId)
+        if (!session) {
+            throw new Error('Session not found')
+        }
+
+        const updated = this.store.sessions.updateSessionSortOrder(sessionId, sortOrder, session.namespace)
+        if (!updated) {
+            throw new Error('Failed to update session sort order')
+        }
+
+        this.refreshSession(sessionId)
+    }
+
     async deleteSession(sessionId: string): Promise<void> {
         const session = this.sessions.get(sessionId)
         if (!session) {
@@ -277,16 +308,57 @@ export class SessionCache {
             throw new Error('Cannot delete active session')
         }
 
-        const deleted = this.store.sessions.deleteSession(sessionId, session.namespace)
-        if (!deleted) {
-            throw new Error('Failed to delete session')
-        }
+        // Delete from DB if present (may not exist for sessions that were only in-memory)
+        this.store.sessions.deleteSession(sessionId, session.namespace)
 
         this.sessions.delete(sessionId)
         this.lastBroadcastAtBySessionId.delete(sessionId)
         this.todoBackfillAttemptedSessionIds.delete(sessionId)
+        this.store.sessionBeads.deleteSession(sessionId)
 
         this.publisher.emit({ type: 'session-removed', sessionId, namespace: session.namespace })
+    }
+
+    async clearInactiveSessions(
+        namespace: string,
+        olderThanMs?: number
+    ): Promise<{ deleted: string[]; failed: string[] }> {
+        const cutoff = typeof olderThanMs === 'number'
+            ? Date.now() - olderThanMs
+            : null
+
+        const candidates = Array.from(this.sessions.values())
+            .filter((session) => {
+                if (session.namespace !== namespace) return false
+                if (session.active) return false
+                if (cutoff !== null && session.updatedAt >= cutoff) return false
+                return true
+            })
+            .map((session) => ({ id: session.id, namespace: session.namespace }))
+
+        if (candidates.length === 0) {
+            return { deleted: [], failed: [] }
+        }
+
+        const candidateIds = candidates.map((session) => session.id)
+
+        try {
+            this.store.transaction(() => {
+                this.store.sessionBeads.deleteSessionBatch(candidateIds)
+                this.store.sessions.deleteSessionBatch(candidateIds, namespace)
+            })
+        } catch {
+            return { deleted: [], failed: candidateIds }
+        }
+
+        for (const candidate of candidates) {
+            this.sessions.delete(candidate.id)
+            this.lastBroadcastAtBySessionId.delete(candidate.id)
+            this.todoBackfillAttemptedSessionIds.delete(candidate.id)
+            this.publisher.emit({ type: 'session-removed', sessionId: candidate.id, namespace: candidate.namespace })
+        }
+
+        return { deleted: candidateIds, failed: [] }
     }
 
     async mergeSessions(oldSessionId: string, newSessionId: string, namespace: string): Promise<void> {
@@ -331,6 +403,23 @@ export class SessionCache {
                 namespace
             )
         }
+
+        if (oldStored.sortOrder !== newStored.sortOrder) {
+            const sortOrderUpdated = this.store.sessions.updateSessionSortOrder(
+                newSessionId,
+                oldStored.sortOrder,
+                namespace
+            )
+            if (!sortOrderUpdated) {
+                throw new Error('Failed to preserve session sort order during merge')
+            }
+        }
+
+        if (oldStored.parentSessionId && !newStored.parentSessionId) {
+            this.store.sessions.setParentSessionId(newSessionId, oldStored.parentSessionId, namespace)
+        }
+
+        this.store.sessionBeads.reassignSession(oldSessionId, newSessionId)
 
         const deleted = this.store.sessions.deleteSession(oldSessionId, namespace)
         if (!deleted) {

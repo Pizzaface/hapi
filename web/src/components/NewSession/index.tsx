@@ -3,23 +3,26 @@ import type { ApiClient } from '@/api/client'
 import type { Machine } from '@/types/api'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useSpawnSession } from '@/hooks/mutations/useSpawnSession'
+import { useAgents } from '@/hooks/queries/useAgents'
 import { useSessions } from '@/hooks/queries/useSessions'
 import { useActiveSuggestions, type Suggestion } from '@/hooks/useActiveSuggestions'
 import { useDirectorySuggestions } from '@/hooks/useDirectorySuggestions'
 import { useRecentPaths } from '@/hooks/useRecentPaths'
-import type { AgentType, SessionType } from './types'
+import { useTranslation } from '@/lib/use-translation'
+import type { AgentType } from './types'
 import { ActionButtons } from './ActionButtons'
 import { AgentSelector } from './AgentSelector'
 import { DirectorySection } from './DirectorySection'
 import { MachineSelector } from './MachineSelector'
 import { ModelSelector } from './ModelSelector'
+import { PersonaSelector } from './PersonaSelector'
 import {
     loadPreferredAgent,
     loadPreferredYoloMode,
     savePreferredAgent,
     savePreferredYoloMode,
 } from './preferences'
-import { SessionTypeSelector } from './SessionTypeSelector'
+import { buildWorktreeSpawnParams, normalizeGitBranches } from './worktreeSupport'
 import { YoloToggle } from './YoloToggle'
 
 export function NewSession(props: {
@@ -32,6 +35,7 @@ export function NewSession(props: {
     onCancel: () => void
 }) {
     const { haptic } = usePlatform()
+    const { t } = useTranslation()
     const { spawnSession, isPending, error: spawnError } = useSpawnSession(props.api)
     const { sessions } = useSessions(props.api)
     const isFormDisabled = Boolean(isPending || props.isLoading)
@@ -43,9 +47,10 @@ export function NewSession(props: {
     const [isDirectoryFocused, setIsDirectoryFocused] = useState(false)
     const [pathExistence, setPathExistence] = useState<Record<string, boolean>>({})
     const [agent, setAgent] = useState<AgentType>(loadPreferredAgent)
+    const [persona, setPersona] = useState<string | null>(null)
     const [model, setModel] = useState('auto')
     const [yoloMode, setYoloMode] = useState(loadPreferredYoloMode)
-    const [sessionType, setSessionType] = useState<SessionType>('simple')
+    const [supportsWorktree, setSupportsWorktree] = useState(false)
     const [worktreeName, setWorktreeName] = useState('')
     const [worktreeBranch, setWorktreeBranch] = useState('')
     const [availableBranches, setAvailableBranches] = useState<string[]>([])
@@ -56,19 +61,15 @@ export function NewSession(props: {
     const worktreeBranchInputRef = useRef<HTMLInputElement>(null)
 
     useEffect(() => {
-        if (sessionType === 'worktree') {
+        if (supportsWorktree) {
             worktreeInputRef.current?.focus()
         }
-    }, [sessionType])
+    }, [supportsWorktree])
 
     useEffect(() => {
-        if (sessionType !== 'worktree') {
-            setAvailableBranches([])
-            return
-        }
-
         const trimmedDirectory = directory.trim()
         if (!machineId || !trimmedDirectory) {
+            setSupportsWorktree(false)
             setAvailableBranches([])
             return
         }
@@ -78,16 +79,12 @@ export function NewSession(props: {
             void props.api.listMachineGitBranches(machineId, trimmedDirectory, 300)
                 .then((result) => {
                     if (cancelled) return
-                    const branches = Array.isArray(result.branches)
-                        ? result.branches
-                            .filter((value): value is string => typeof value === 'string')
-                            .map((value) => value.trim())
-                            .filter(Boolean)
-                        : []
-                    setAvailableBranches(Array.from(new Set(branches)))
+                    setSupportsWorktree(true)
+                    setAvailableBranches(normalizeGitBranches(result.branches))
                 })
                 .catch(() => {
                     if (cancelled) return
+                    setSupportsWorktree(false)
                     setAvailableBranches([])
                 })
         }, 250)
@@ -96,7 +93,7 @@ export function NewSession(props: {
             cancelled = true
             clearTimeout(timeout)
         }
-    }, [props.api, machineId, directory, sessionType])
+    }, [props.api, machineId, directory])
 
     useEffect(() => {
         setModel('auto')
@@ -261,7 +258,7 @@ export function NewSession(props: {
             }))
     }, [availableBranches])
 
-    const activeBranchQuery = sessionType === 'worktree' && isBranchFocused && !suppressBranchSuggestions
+    const activeBranchQuery = supportsWorktree && isBranchFocused && !suppressBranchSuggestions
         ? worktreeBranch
         : null
 
@@ -270,6 +267,17 @@ export function NewSession(props: {
         getBranchSuggestions,
         { allowEmptyQuery: true, autoSelectFirst: false }
     )
+
+    const { agents } = useAgents(
+        props.api,
+        machineId,
+        directory,
+        agent === 'claude'
+    )
+
+    useEffect(() => {
+        setPersona(null)
+    }, [machineId, directory, agent])
 
     const handleDirectoryKeyDown = useCallback((event: ReactKeyboardEvent<HTMLInputElement>) => {
         if (suggestions.length === 0) return
@@ -349,15 +357,22 @@ export function NewSession(props: {
         setError(null)
         try {
             const resolvedModel = model !== 'auto' && agent !== 'opencode' ? model : undefined
+            const worktreeSpawnParams = buildWorktreeSpawnParams(
+                supportsWorktree,
+                worktreeName,
+                worktreeBranch
+            )
+            const initialPrompt = agent === 'claude' && persona
+                ? `/agents ${persona}`
+                : undefined
             const result = await spawnSession({
                 machineId,
                 directory: directory.trim(),
                 agent,
                 model: resolvedModel,
                 yolo: yoloMode,
-                sessionType,
-                worktreeName: sessionType === 'worktree' ? (worktreeName.trim() || undefined) : undefined,
-                worktreeBranch: sessionType === 'worktree' ? (worktreeBranch.trim() || undefined) : undefined
+                initialPrompt,
+                ...worktreeSpawnParams
             })
 
             if (result.type === 'success') {
@@ -400,27 +415,78 @@ export function NewSession(props: {
                 onSuggestionSelect={handleSuggestionSelect}
                 onPathClick={handlePathClick}
             />
-            <SessionTypeSelector
-                sessionType={sessionType}
-                worktreeName={worktreeName}
-                worktreeBranch={worktreeBranch}
-                branchSuggestions={branchSuggestions}
-                branchSelectedIndex={branchSelectedIndex}
-                worktreeInputRef={worktreeInputRef}
-                worktreeBranchInputRef={worktreeBranchInputRef}
-                isDisabled={isFormDisabled}
-                onSessionTypeChange={setSessionType}
-                onWorktreeNameChange={setWorktreeName}
-                onWorktreeBranchChange={handleWorktreeBranchChange}
-                onWorktreeBranchFocus={handleWorktreeBranchFocus}
-                onWorktreeBranchBlur={handleWorktreeBranchBlur}
-                onWorktreeBranchKeyDown={handleWorktreeBranchKeyDown}
-                onWorktreeBranchSuggestionSelect={handleWorktreeBranchSuggestionSelect}
-            />
+            {machineId && directory.trim() ? (
+                <div className="flex flex-col gap-2 px-3 py-3">
+                    {supportsWorktree ? (
+                        <>
+                            <div className="text-xs text-[var(--app-hint)]">
+                                {t('newSession.worktree.auto')}
+                            </div>
+                            <input
+                                ref={worktreeInputRef}
+                                type="text"
+                                placeholder={t('newSession.type.worktree.placeholder')}
+                                value={worktreeName}
+                                onChange={(event) => setWorktreeName(event.target.value)}
+                                disabled={isFormDisabled}
+                                className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-60"
+                            />
+                            <div className="relative">
+                                <input
+                                    ref={worktreeBranchInputRef}
+                                    type="text"
+                                    placeholder={t('newSession.type.worktree.branchPlaceholder')}
+                                    value={worktreeBranch}
+                                    onChange={(event) => handleWorktreeBranchChange(event.target.value)}
+                                    onFocus={handleWorktreeBranchFocus}
+                                    onBlur={handleWorktreeBranchBlur}
+                                    onKeyDown={handleWorktreeBranchKeyDown}
+                                    disabled={isFormDisabled}
+                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-60"
+                                />
+                                {branchSuggestions.length > 0 ? (
+                                    <div className="absolute left-0 right-0 top-full z-10 mt-1">
+                                        <div className="max-h-[180px] overflow-y-auto rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] shadow-lg">
+                                            {branchSuggestions.map((suggestion, index) => (
+                                                <button
+                                                    key={suggestion.key}
+                                                    type="button"
+                                                    className={`w-full px-2 py-1 text-left text-sm ${
+                                                        index === branchSelectedIndex
+                                                            ? 'bg-[var(--app-secondary-bg)]'
+                                                            : ''
+                                                    }`}
+                                                    onMouseDown={(event) => {
+                                                        event.preventDefault()
+                                                    }}
+                                                    onClick={() => handleWorktreeBranchSuggestionSelect(index)}
+                                                >
+                                                    {suggestion.label}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ) : null}
+                            </div>
+                        </>
+                    ) : (
+                        <div className="text-xs text-[var(--app-hint)]">
+                            {t('newSession.worktree.unavailable')}
+                        </div>
+                    )}
+                </div>
+            ) : null}
             <AgentSelector
                 agent={agent}
                 isDisabled={isFormDisabled}
                 onAgentChange={setAgent}
+            />
+            <PersonaSelector
+                agent={agent}
+                personas={agents}
+                persona={persona}
+                isDisabled={isFormDisabled}
+                onPersonaChange={setPersona}
             />
             <ModelSelector
                 agent={agent}

@@ -7,14 +7,22 @@
     "types": "./src/index.ts",
     "exports": {
         ".": "./src/index.ts",
+        "./beads": "./src/beads.ts",
         "./messages": "./src/messages.ts",
         "./modes": "./src/modes.ts",
         "./schemas": "./src/schemas.ts",
         "./types": "./src/types.ts",
         "./voice": "./src/voice.ts"
     },
+    "scripts": {
+        "typecheck": "tsc --noEmit"
+    },
     "sideEffects": false,
     "dependencies": {
         "zod": "^4.2.1"
+    },
+    "devDependencies": {
+        "bun-types": "^1.3.5",
+        "typescript": "^5"
     }
 }

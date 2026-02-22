@@ -1,4 +1,5 @@
 import { getPermissionModeOptionsForFlavor, MODEL_MODE_LABELS, MODEL_MODES } from '@hapi/protocol'
+import type { ThinkingActivity } from '@hapi/protocol'
 import { ComposerPrimitive, useAssistantApi, useAssistantState } from '@assistant-ui/react'
 import {
     type ChangeEvent as ReactChangeEvent,
@@ -22,6 +23,7 @@ import { usePlatform } from '@/hooks/usePlatform'
 import { usePWAInstall } from '@/hooks/usePWAInstall'
 import { isCodexFamilyFlavor } from '@/lib/agentFlavorUtils'
 import { markSkillUsed } from '@/lib/recent-skills'
+import { getDraft, setDraft, clearDraft } from '@/lib/draft-store'
 import { FloatingOverlay } from '@/components/ChatInput/FloatingOverlay'
 import { Autocomplete } from '@/components/ChatInput/Autocomplete'
 import { StatusBar } from '@/components/AssistantChat/StatusBar'
@@ -37,7 +39,7 @@ export interface TextInputState {
 const defaultSuggestionHandler = async (): Promise<Suggestion[]> => []
 
 const RUNTIME_MODEL_PRESETS: Record<string, string[]> = {
-    codex: [],
+    codex: ['gpt-5.3-codex', 'gpt-5.3-codex-spark', 'gpt-5.2-codex', 'gpt-5-codex-mini', 'gpt-5-codex'],
     gemini: ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash'],
     opencode: ['default']
 }
@@ -45,12 +47,14 @@ const RUNTIME_MODEL_PRESETS: Record<string, string[]> = {
 const EFFORT_PRESETS = ['low', 'medium', 'high'] as const
 
 export function HappyComposer(props: {
+    sessionId?: string
     disabled?: boolean
     permissionMode?: PermissionMode
     modelMode?: ModelMode
     active?: boolean
     allowSendWhenInactive?: boolean
     thinking?: boolean
+    thinkingActivity?: ThinkingActivity | null
     agentState?: AgentState | null
     contextSize?: number
     controlledByUser?: boolean
@@ -74,6 +78,7 @@ export function HappyComposer(props: {
 }) {
     const { t } = useTranslation()
     const {
+        sessionId: draftSessionId,
         disabled = false,
         permissionMode: rawPermissionMode,
         modelMode: rawModelMode,
@@ -156,6 +161,20 @@ export function HappyComposer(props: {
 
     const textareaRef = useRef<HTMLTextAreaElement>(null)
     const prevControlledByUser = useRef(controlledByUser)
+    const composerTextRef = useRef(composerText)
+    composerTextRef.current = composerText
+
+    // Restore draft on mount, save on unmount
+    useEffect(() => {
+        if (!draftSessionId) return
+        const saved = getDraft(draftSessionId)
+        if (saved) {
+            api.composer().setText(saved)
+        }
+        return () => {
+            setDraft(draftSessionId, composerTextRef.current)
+        }
+    }, [draftSessionId]) // eslint-disable-line react-hooks/exhaustive-deps -- intentionally mount/unmount only
 
     useEffect(() => {
         setInputState((prev) => {
@@ -405,8 +424,11 @@ export function HappyComposer(props: {
             event.preventDefault()
             return
         }
+        if (draftSessionId) {
+            clearDraft(draftSessionId)
+        }
         setShowContinueHint(false)
-    }, [attachmentsReady])
+    }, [attachmentsReady, draftSessionId])
 
     const handlePermissionChange = useCallback((mode: PermissionMode) => {
         if (!onPermissionModeChange || controlsDisabled) return
@@ -700,7 +722,9 @@ export function HappyComposer(props: {
     ])
 
     return (
-        <div className={`px-3 ${bottomPaddingClass} pt-2 bg-[var(--app-bg)]`}>
+        <div
+            className={`px-3 ${bottomPaddingClass} pt-2 bg-[var(--app-bg)]`}
+        >
             <div className="mx-auto w-full max-w-content">
                 <ComposerPrimitive.Root className="relative" onSubmit={handleSubmit}>
                     {overlays}
@@ -708,6 +732,7 @@ export function HappyComposer(props: {
                     <StatusBar
                         active={active}
                         thinking={thinking}
+                        thinkingActivity={props.thinkingActivity}
                         agentState={agentState}
                         contextSize={contextSize}
                         modelMode={modelMode}

@@ -6,6 +6,11 @@ import { queryKeys } from '@/lib/query-keys'
 import { clearMessageWindow } from '@/lib/message-window-store'
 import { isKnownFlavor } from '@/lib/agentFlavorUtils'
 
+type ExitSessionCallbacks = {
+    onDeleted?: () => void
+    onError?: (error: Error) => void
+}
+
 export function useSessionActions(
     api: ApiClient | null,
     sessionId: string | null,
@@ -18,6 +23,7 @@ export function useSessionActions(
     setModelMode: (mode: ModelMode) => Promise<void>
     renameSession: (name: string) => Promise<void>
     deleteSession: () => Promise<void>
+    exitSession: (callbacks?: ExitSessionCallbacks) => Promise<void>
     isPending: boolean
 } {
     const queryClient = useQueryClient()
@@ -106,6 +112,32 @@ export function useSessionActions(
         },
     })
 
+    const exitMutation = useMutation({
+        mutationFn: async () => {
+            if (!api || !sessionId) {
+                throw new Error('Session unavailable')
+            }
+            await api.exitSession(sessionId)
+        },
+        onSuccess: async () => {
+            if (!sessionId) return
+            queryClient.removeQueries({ queryKey: queryKeys.session(sessionId) })
+            clearMessageWindow(sessionId)
+            await queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
+        },
+    })
+
+    const exitSession = async (callbacks?: ExitSessionCallbacks): Promise<void> => {
+        try {
+            await exitMutation.mutateAsync()
+            callbacks?.onDeleted?.()
+        } catch (error) {
+            const wrappedError = error instanceof Error ? error : new Error(String(error))
+            callbacks?.onError?.(wrappedError)
+            throw wrappedError
+        }
+    }
+
     return {
         abortSession: abortMutation.mutateAsync,
         archiveSession: archiveMutation.mutateAsync,
@@ -114,12 +146,40 @@ export function useSessionActions(
         setModelMode: modelMutation.mutateAsync,
         renameSession: renameMutation.mutateAsync,
         deleteSession: deleteMutation.mutateAsync,
+        exitSession,
         isPending: abortMutation.isPending
             || archiveMutation.isPending
             || switchMutation.isPending
             || permissionMutation.isPending
             || modelMutation.isPending
             || renameMutation.isPending
-            || deleteMutation.isPending,
+            || deleteMutation.isPending
+            || exitMutation.isPending,
+    }
+}
+
+export type SessionSortOrderUpdate = {
+    sessionId: string
+    sortOrder: string
+}
+
+export function useSessionSortOrderMutation(
+    api: ApiClient | null
+): {
+    setSessionSortOrder: (payload: SessionSortOrderUpdate) => Promise<void>
+    isPending: boolean
+} {
+    const mutation = useMutation({
+        mutationFn: async ({ sessionId, sortOrder }: SessionSortOrderUpdate) => {
+            if (!api) {
+                throw new Error('Session unavailable')
+            }
+            await api.setSessionSortOrder(sessionId, sortOrder)
+        },
+    })
+
+    return {
+        setSessionSortOrder: mutation.mutateAsync,
+        isPending: mutation.isPending
     }
 }
