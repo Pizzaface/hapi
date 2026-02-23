@@ -58,6 +58,8 @@ export default {
   // Session header
   'session.title': '文件',
   'session.more': '更多操作',
+  'session.dev.view': '开发者视图',
+  'session.dev.hide': '隐藏开发者视图',
 
   // Session actions
   'session.action.rename': '重命名',
@@ -85,6 +87,7 @@ export default {
 
   // Common buttons
   'button.cancel': '取消',
+  'button.back': '返回',
   'button.save': '保存',
   'button.confirm': '确认',
   'button.close': '关闭',

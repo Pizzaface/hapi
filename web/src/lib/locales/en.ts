@@ -58,6 +58,8 @@ export default {
   // Session header
   'session.title': 'Files',
   'session.more': 'More actions',
+  'session.dev.view': 'Developer View',
+  'session.dev.hide': 'Hide Developer View',
 
   // Session actions
   'session.action.rename': 'Rename',
@@ -83,6 +85,7 @@ export default {
 
   // Common buttons
   'button.cancel': 'Cancel',
+  'button.back': 'Back',
   'button.save': 'Save',
   'button.confirm': 'Confirm',
   'button.close': 'Close',
