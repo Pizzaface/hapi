@@ -133,6 +133,7 @@ export function SessionHeader(props: {
                     <button
                         type="button"
                         onClick={props.onBack}
+                        aria-label={t('button.back')}
                         className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
                     >
                         <svg
@@ -178,7 +179,8 @@ export function SessionHeader(props: {
                                     ? 'bg-[var(--app-link)]/15 text-[var(--app-link)]'
                                     : 'text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]'
                             }`}
-                            title="Developer View"
+                            title={props.devViewActive ? t('session.dev.hide') : t('session.dev.view')}
+                            aria-label={props.devViewActive ? t('session.dev.hide') : t('session.dev.view')}
                         >
                             <CodeIcon />
                         </button>
@@ -190,6 +192,7 @@ export function SessionHeader(props: {
                             onClick={props.onViewFiles}
                             className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
                             title={t('session.title')}
+                            aria-label={t('session.title')}
                         >
                             <FilesIcon />
                         </button>
@@ -205,6 +208,7 @@ export function SessionHeader(props: {
                         aria-controls={menuOpen ? menuId : undefined}
                         className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
                         title={t('session.more')}
+                        aria-label={t('session.more')}
                     >
                         <MoreVerticalIcon />
                     </button>
