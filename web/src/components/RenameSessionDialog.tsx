@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useId } from 'react'
 import {
     Dialog,
     DialogContent,
@@ -22,15 +22,12 @@ export function RenameSessionDialog(props: RenameSessionDialogProps) {
     const [name, setName] = useState(currentName)
     const [error, setError] = useState<string | null>(null)
     const inputRef = useRef<HTMLInputElement>(null)
+    const errorId = useId()
 
     useEffect(() => {
         if (isOpen) {
             setName(currentName)
             setError(null)
-            setTimeout(() => {
-                inputRef.current?.focus()
-                inputRef.current?.select()
-            }, 100)
         }
     }, [isOpen, currentName])
 
@@ -50,15 +47,18 @@ export function RenameSessionDialog(props: RenameSessionDialogProps) {
         }
     }
 
-    const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === 'Escape') {
-            onClose()
-        }
-    }
-
     return (
         <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-            <DialogContent className="max-w-sm">
+            <DialogContent
+                className="max-w-sm"
+                onOpenAutoFocus={(e) => {
+                    e.preventDefault()
+                    inputRef.current?.focus()
+                    // Select text content for easy renaming
+                    setTimeout(() => inputRef.current?.select(), 0)
+                }}
+                aria-describedby={undefined}
+            >
                 <DialogHeader>
                     <DialogTitle>{t('dialog.rename.title')}</DialogTitle>
                 </DialogHeader>
@@ -68,15 +68,21 @@ export function RenameSessionDialog(props: RenameSessionDialogProps) {
                         type="text"
                         value={name}
                         onChange={(e) => setName(e.target.value)}
-                        onKeyDown={handleKeyDown}
                         placeholder={t('dialog.rename.placeholder')}
                         className="w-full px-3 py-2.5 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--app-button)] focus:border-transparent"
                         disabled={isPending}
                         maxLength={255}
+                        aria-label={t('dialog.rename.placeholder')}
+                        aria-invalid={!!error}
+                        aria-describedby={error ? errorId : undefined}
                     />
 
                     {error ? (
-                        <div className="rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
+                        <div
+                            id={errorId}
+                            role="alert"
+                            className="rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400"
+                        >
                             {error}
                         </div>
                     ) : null}
