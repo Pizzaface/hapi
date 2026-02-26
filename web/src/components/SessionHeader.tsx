@@ -133,6 +133,7 @@ export function SessionHeader(props: {
                     <button
                         type="button"
                         onClick={props.onBack}
+                        aria-label={t('session.header.back')}
                         className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
                     >
                         <svg
@@ -178,7 +179,8 @@ export function SessionHeader(props: {
                                     ? 'bg-[var(--app-link)]/15 text-[var(--app-link)]'
                                     : 'text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]'
                             }`}
-                            title="Developer View"
+                            title={t('session.header.devView')}
+                            aria-label={t('session.header.devView')}
                         >
                             <CodeIcon />
                         </button>
@@ -189,7 +191,8 @@ export function SessionHeader(props: {
                             type="button"
                             onClick={props.onViewFiles}
                             className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                            title={t('session.title')}
+                            title={t('session.header.files')}
+                            aria-label={t('session.header.files')}
                         >
                             <FilesIcon />
                         </button>
@@ -204,7 +207,8 @@ export function SessionHeader(props: {
                         aria-expanded={menuOpen}
                         aria-controls={menuOpen ? menuId : undefined}
                         className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                        title={t('session.more')}
+                        title={t('session.header.more')}
+                        aria-label={t('session.header.more')}
                     >
                         <MoreVerticalIcon />
                     </button>

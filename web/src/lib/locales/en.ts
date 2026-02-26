@@ -57,6 +57,10 @@ export default {
 
   // Session header
   'session.title': 'Files',
+  'session.header.back': 'Back',
+  'session.header.devView': 'Developer View',
+  'session.header.files': 'Session Files',
+  'session.header.more': 'More Actions',
   'session.more': 'More actions',
 
   // Session actions
