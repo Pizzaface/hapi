@@ -57,6 +57,10 @@ export default {
 
   // Session header
   'session.title': '文件',
+  'session.header.back': '返回',
+  'session.header.devView': '开发者视图',
+  'session.header.files': '会话文件',
+  'session.header.more': '更多操作',
   'session.more': '更多操作',
 
   // Session actions

@@ -568,6 +568,7 @@ export function SessionList(props: {
                         onClick={() => props.onNewSession()}
                         className="session-list-new-button p-1.5 rounded-full text-[var(--app-link)] transition-colors"
                         title={t('sessions.new')}
+                        aria-label={t('sessions.new')}
                     >
                         <PlusIcon className="h-5 w-5" />
                     </button>
