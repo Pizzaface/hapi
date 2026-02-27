@@ -64,6 +64,8 @@ export default {
   'session.action.archive': 'Archive',
   'session.action.delete': 'Delete',
   'session.action.copy': 'Copy',
+  'session.action.devView': 'Developer View',
+  'session.action.hideDevView': 'Hide Developer View',
 
   // Dialogs
   'dialog.rename.title': 'Rename Session',
@@ -88,6 +90,7 @@ export default {
   'button.close': 'Close',
   'button.dismiss': 'Dismiss',
   'button.copy': 'Copy',
+  'button.back': 'Back',
 
   // New session form
   'newSession.machine': 'Machine',

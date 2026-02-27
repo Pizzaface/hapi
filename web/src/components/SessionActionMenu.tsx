@@ -276,7 +276,7 @@ export function SessionActionMenu(props: SessionActionMenuProps) {
                         onClick={handleDevView}
                     >
                         <CodeBracketIcon className={devViewActive ? 'text-[var(--app-link)]' : 'text-[var(--app-hint)]'} />
-                        {devViewActive ? 'Hide Developer View' : 'Developer View'}
+                        {devViewActive ? t('session.action.hideDevView') : t('session.action.devView')}
                     </button>
                 ) : null}
 

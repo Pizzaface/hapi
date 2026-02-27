@@ -64,6 +64,8 @@ export default {
   'session.action.archive': '归档',
   'session.action.delete': '删除',
   'session.action.copy': '复制',
+  'session.action.devView': '开发者视图',
+  'session.action.hideDevView': '隐藏开发者视图',
 
   // Dialogs
   'dialog.rename.title': '重命名会话',
@@ -90,6 +92,7 @@ export default {
   'button.close': '关闭',
   'button.dismiss': '忽略',
   'button.copy': '复制',
+  'button.back': '返回',
 
   // New session form
   'newSession.machine': '机器',

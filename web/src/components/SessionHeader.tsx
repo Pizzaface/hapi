@@ -133,6 +133,8 @@ export function SessionHeader(props: {
                     <button
                         type="button"
                         onClick={props.onBack}
+                        aria-label={t('button.back')}
+                        title={t('button.back')}
                         className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
                     >
                         <svg
@@ -178,7 +180,8 @@ export function SessionHeader(props: {
                                     ? 'bg-[var(--app-link)]/15 text-[var(--app-link)]'
                                     : 'text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]'
                             }`}
-                            title="Developer View"
+                            aria-label={props.devViewActive ? t('session.action.hideDevView') : t('session.action.devView')}
+                            title={props.devViewActive ? t('session.action.hideDevView') : t('session.action.devView')}
                         >
                             <CodeIcon />
                         </button>
