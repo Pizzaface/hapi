@@ -1,0 +1,3 @@
+## 2026-03-01 - [Interactive Component Accessibility Pattern]
+**Learning:** Interactive components like `Card` built dynamically from collections (e.g. mapping over arrays and attaching `onClick`) often lack critical accessibility semantics natively. Relying only on visual context (e.g. `cursor-pointer`) makes them undetectable to screen readers as actionable and inaccessible via keyboard navigation.
+**Action:** When making custom non-button elements interactive (e.g., clickable `Card`), always explicitly provide `role="button"`, `tabIndex={0}`, an `onKeyDown` handler (for 'Enter' and 'Space'), and visual interaction cues for hover (`hover:bg-[...]`) and keyboard focus (`focus-visible:outline-none focus-visible:ring-2`).
