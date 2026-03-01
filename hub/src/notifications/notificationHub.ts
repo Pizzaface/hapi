@@ -147,21 +147,25 @@ export class NotificationHub {
     }
 
     private async notifyReady(session: Session): Promise<void> {
-        for (const channel of this.channels) {
-            try {
-                await channel.sendReady(session)
-            } catch (error) {
-                console.error('[NotificationHub] Failed to send ready notification:', error)
+        const results = await Promise.allSettled(
+            this.channels.map((channel) => channel.sendReady(session))
+        )
+
+        for (const result of results) {
+            if (result.status === 'rejected') {
+                console.error('[NotificationHub] Failed to send ready notification:', result.reason)
             }
         }
     }
 
     private async notifyPermission(session: Session): Promise<void> {
-        for (const channel of this.channels) {
-            try {
-                await channel.sendPermissionRequest(session)
-            } catch (error) {
-                console.error('[NotificationHub] Failed to send permission notification:', error)
+        const results = await Promise.allSettled(
+            this.channels.map((channel) => channel.sendPermissionRequest(session))
+        )
+
+        for (const result of results) {
+            if (result.status === 'rejected') {
+                console.error('[NotificationHub] Failed to send permission notification:', result.reason)
             }
         }
     }
