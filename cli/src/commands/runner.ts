@@ -60,7 +60,7 @@ export const runnerCommand: CommandDefinition = {
 
             let started = false
             for (let i = 0; i < 50; i++) {
-                if (await checkIfRunnerRunningAndCleanupStaleState()) {
+                if ((await checkIfRunnerRunningAndCleanupStaleState()).isRunning) {
                     started = true
                     break
                 }
