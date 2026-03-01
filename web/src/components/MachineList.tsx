@@ -21,8 +21,16 @@ export function MachineList(props: {
                 {props.machines.map((m) => (
                     <Card
                         key={m.id}
-                        className="cursor-pointer"
+                        role="button"
+                        tabIndex={0}
+                        className="cursor-pointer transition-colors hover:bg-[var(--app-subtle-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
                         onClick={() => props.onSelect(m.id)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault()
+                                props.onSelect(m.id)
+                            }
+                        }}
                     >
                         <CardHeader className="pb-2">
                             <CardTitle className="truncate">{getMachineTitle(m)}</CardTitle>
