@@ -347,8 +347,6 @@ export class CodexMcpClient {
 
         const args: Record<string, unknown> = {
             threadId,
-            // Keep deprecated field for backwards compatibility with older builds.
-            conversationId: threadId,
             prompt
         };
         logger.debug('[CodexMCP] Continuing Codex session:', args);
