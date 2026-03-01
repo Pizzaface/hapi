@@ -131,7 +131,7 @@ export async function startRunner(): Promise<void> {
     await stopRunner();
   } else {
     logger.debug('[RUNNER RUN] Runner version matches, keeping existing runner');
-    console.log('Runner already running with matching version');
+    logger.info('Runner already running with matching version');
     process.exit(0);
   }
 
