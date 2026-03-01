@@ -152,7 +152,7 @@ export async function runDoctorCommand(filter?: 'all' | 'runner'): Promise<void>
     // Runner status - shown for both 'all' and 'runner' filters
     console.log(chalk.bold('\n🤖 Runner Status'));
     try {
-        const isRunning = await checkIfRunnerRunningAndCleanupStaleState();
+        const { isRunning } = await checkIfRunnerRunningAndCleanupStaleState();
         const state = await readRunnerState();
 
         if (isRunning && state) {

@@ -4,8 +4,14 @@
  */
 
 import { logger } from '@/ui/logger';
-import { clearRunnerState, readRunnerState } from '@/persistence';
+import { clearRunnerState, readRunnerState, RunnerLocallyPersistedState } from '@/persistence';
 import { Metadata } from '@/api/types';
+
+export interface RunnerStatus {
+  isRunning: boolean;
+  status: 'running' | 'stale_cleaned' | 'not_running';
+  state: RunnerLocallyPersistedState | null;
+}
 import packageJson from '../../package.json';
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -135,20 +141,32 @@ export async function stopRunnerHttp(): Promise<void> {
  * We can destructure the response on the caller for richer output.
  * For instance when running `hapi runner status` we can show more information.
  */
-export async function checkIfRunnerRunningAndCleanupStaleState(): Promise<boolean> {
+export async function checkIfRunnerRunningAndCleanupStaleState(): Promise<RunnerStatus> {
   const state = await readRunnerState();
   if (!state) {
-    return false;
+    return {
+      isRunning: false,
+      status: 'not_running',
+      state: null
+    };
   }
 
   // Check if the runner is running
   if (isProcessAlive(state.pid)) {
-    return true;
+    return {
+      isRunning: true,
+      status: 'running',
+      state
+    };
   }
 
   logger.debug('[RUNNER RUN] Runner PID not running, cleaning up state');
   await cleanupRunnerState();
-  return false;
+  return {
+    isRunning: false,
+    status: 'stale_cleaned',
+    state
+  };
 }
 
 /**
@@ -160,7 +178,7 @@ export async function checkIfRunnerRunningAndCleanupStaleState(): Promise<boolea
  */
 export async function isRunnerRunningCurrentlyInstalledHappyVersion(): Promise<boolean> {
   logger.debug('[RUNNER CONTROL] Checking if runner is running same version');
-  const runningRunner = await checkIfRunnerRunningAndCleanupStaleState();
+  const { isRunning: runningRunner } = await checkIfRunnerRunningAndCleanupStaleState();
   if (!runningRunner) {
     logger.debug('[RUNNER CONTROL] No runner running, returning false');
     return false;
