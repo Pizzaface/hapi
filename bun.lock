@@ -1,6 +1,5 @@
 {
   "lockfileVersion": 1,
-  "configVersion": 1,
   "workspaces": {
     "": {
       "name": "hapi",
@@ -1596,7 +1595,7 @@
 
     "hachure-fill": ["hachure-fill@0.5.2", "", {}, "sha512-3GKBOn+m2LX9iq+JC1064cSFprJY4jL1jCXTcpnfER5HYE2l/4EfWSGzkPa/ZDBmYI0ZOEj5VHV/eKnPGkHuOg=="],
 
-    "hapi": ["hapi@github:Pizzaface/hapi#e69143d", {}, "Pizzaface-hapi-e69143d"],
+    "hapi": ["hapi@github:Pizzaface/hapi#f680e8d", {}, "Pizzaface-hapi-f680e8d"],
 
     "hapi-docs": ["hapi-docs@workspace:docs"],
 
